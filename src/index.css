@@ -1,0 +1,70 @@
+@import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:ital,wght@0,200;0,300;0,400;0,500;0,600;0,700;0,800;1,200;1,300;1,400;1,500;1,600;1,700;1,800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+@theme {
+  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Outfit", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+  
+  --color-red-primary: #f40000;
+  --color-red-dark: #c00000;
+  --color-red-light: #ff4444;
+  --color-bg-dark: #111111;
+}
+
+@layer base {
+  body {
+    @apply font-sans text-gray-900 antialiased;
+  }
+  
+  h1, h2, h3, .font-display {
+    @apply font-display tracking-tight;
+  }
+}
+
+.card {
+  @apply bg-white border border-gray-200 rounded-xl shadow-sm transition-all duration-200 hover:border-red-primary hover:shadow-lg hover:-translate-y-0.5;
+}
+
+.btn-primary {
+  @apply bg-gradient-to-br from-red-primary to-red-dark text-white font-bold py-3 px-7 rounded-lg cursor-pointer transition-all duration-300 shadow-md hover:shadow-xl hover:-translate-y-0.5 active:translate-y-0;
+}
+
+.btn-secondary {
+  @apply bg-transparent text-red-primary border-2 border-red-primary font-semibold py-2.5 px-6 rounded-lg cursor-pointer transition-all duration-300 hover:bg-red-50 hover:shadow-md;
+}
+
+.sidebar-nav-item {
+  @apply flex items-center gap-3 py-3 px-5 text-gray-400 font-medium rounded-lg mx-2 my-1 cursor-pointer transition-all duration-200 hover:bg-red-primary/10 hover:text-red-primary hover:border-l-4 hover:border-red-primary;
+}
+
+.sidebar-nav-item.active {
+  @apply bg-red-primary/15 text-red-primary border-l-4 border-red-primary;
+}
+
+@keyframes scanline {
+  0% { top: 0%; }
+  100% { top: 100%; }
+}
+
+.scan-line {
+  @apply absolute left-0 right-0 h-[3px] bg-red-primary shadow-[0_0_12px_#f40000] animate-[scanline_1.5s_linear_infinite_alternate];
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #e5e7eb;
+  border-radius: 10px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #f40000;
+}
+

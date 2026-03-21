@@ -1,0 +1,272 @@
+╔══════════════════════════════════════════════════════════════════════════════════╗
+║                     UNIGUILD — FULL PLATFORM IMPLEMENTATION GUIDE               ║
+║                    8 Phases | 6 Dashboards | Supabase Backend                   ║
+╚══════════════════════════════════════════════════════════════════════════════════╝
+
+TECH STACK:
+  Frontend : React + TypeScript + Vite
+  Styling  : Vanilla CSS (custom design tokens in index.css)
+  Backend  : Supabase (PostgreSQL + Auth + Storage + Realtime)
+  Icons    : Lucide React
+  Charts   : Chart.js via react-chartjs-2
+  Animation: Framer Motion
+  QR Code  : html5-qrcode (scanning), qrcode (generation)
+
+ROLES IN THE SYSTEM:
+  student           → StudentDashboard
+  coordinator       → EventCoordinatorDashboard
+  head_coordinator  → HeadCoordinatorDashboard
+  evaluator         → EvaluatorDashboard
+  volunteer         → VolunteerDashboard
+  super_admin       → SuperAdminDashboard
+
+══════════════════════════════════════════════════════════════════════════════════
+PHASE 1 — AUTH & REGISTRATION                                     STATUS: ✅ DONE
+File: src/pages/LoginPage.tsx, RegisterPage.tsx, ProfileSetupPage.tsx
+      src/context/AuthContext.tsx
+══════════════════════════════════════════════════════════════════════════════════
+
+FEATURES IMPLEMENTED:
+  ✅ Login: email + password only (no demo credential display)
+  ✅ Login error: shown if user doesn't exist or wrong password
+  ✅ Registration flow: email → password → confirm password → profile setup
+  ✅ Google sign-in → forces profile completion page before dashboard
+  ✅ Profile setup fields: Name, College, Dept, Year, Phone, Bio, GitHub, LinkedIn, Website
+  ✅ Resume upload: stored in Supabase Storage (bucket: resumes)
+  ✅ After auth + profile complete → redirect to correct role dashboard
+  ✅ Projects, Skills, Work Experience stored in users table (JSONB)
+
+SUPABASE TABLES USED: users (uid, email, name, role, resume_url, etc.)
+SUPABASE STORAGE: resumes bucket
+
+NOTES:
+  - user.role determines which dashboard they land on (AuthContext.tsx handles routing)
+  - Profile completion flag: users.profile_completed = TRUE
+
+══════════════════════════════════════════════════════════════════════════════════
+PHASE 2 — STUDENT DASHBOARD                                       STATUS: ✅ DONE
+File: src/pages/StudentDashboard.tsx
+══════════════════════════════════════════════════════════════════════════════════
+
+FEATURES IMPLEMENTED:
+  ✅ Profile Tab: Bento-box 4-column grid layout
+       - Avatar upload (Supabase Storage: avatars/)
+       - Personal info (name, dept, year, bio, phone, github, linkedin)
+       - Skills: add/remove tags
+       - Resume: upload + embedded PDF preview
+       - Projects: add/edit/delete (JSONB in users table)
+       - Work Experience: add/edit/delete (JSONB)
+       - Notification preferences
+       - Save button works, updates Supabase users table
+  ✅ Notifications: Mark All As Read, Clear All — both working + buttons enlarged
+  ✅ QR Code Passes:
+       - Solo events: unique reg ID encoded in QR
+       - Team events: team_id encoded in QR (for all team members)
+       - QR renders using short unique IDs (not long UUIDs)
+  ✅ Discover Tab:
+       - Shows all events from Supabase (events table)
+       - Solo registration: student fills own details
+       - Team registration: team lead fills name, members (email lookup from users)
+       - Registration saved to registrations table with team_name, team_id, team_members
+  ✅ My Events Tab:
+       - Upcoming / Ongoing / Completed / Applied sub-tabs
+       - Shows QR pass for each registered event
+  ✅ Hackathon Submission:
+       - Fields: Project Idea, GitHub Repo, Demo Video URL, Live Link
+       - Saved to submissions table
+  ✅ Internship Sentinel:
+       - Filters jobs by student dept, year, skills
+       - Higher accuracy matching
+  ✅ Job Board:
+       - Shows all jobs from Supabase (jobs table)
+       - Apply button → saved to applications table
+
+SUPABASE TABLES: users, events, registrations, submissions, jobs, applications, notifications
+SUPABASE STORAGE: avatars/, resumes/
+
+══════════════════════════════════════════════════════════════════════════════════
+PHASE 3 — HEAD COORDINATOR DASHBOARD                              STATUS: ✅ DONE
+File: src/pages/HeadCoordinatorDashboard.tsx
+══════════════════════════════════════════════════════════════════════════════════
+
+FEATURES IMPLEMENTED:
+  ✅ Create Event:
+       - All fields: name, date, start/end date, location, venue type, capacity
+       - website URL, coordinator email, registration type, max team size
+       - Direct banner upload → Supabase Storage (banners bucket) → banner_url saved
+       - Published to events table
+  ✅ My Events Tab:
+       - Lists all events created by this coordinator
+       - Sub-tabs: Overview (stats, slot fill) | Staff (assigned members)
+       - Export staff list as CSV
+       - "Mark Event Complete" button
+  ✅ My Team Tab:
+       - Overview: live stats (coordinator count, evaluator count, volunteer count)
+       - Assign Evaluator: dropdown selects event → pick user → Assign button
+       - Assign Event Coordinator: same pattern
+       - Assign Volunteer: checkboxes per event
+       - All assignments saved to assignments table (user_id, event_id, role)
+       - Team Directory: live table of all assignments with remove button
+  ✅ Attendance Tab:
+       - Select event → see all registrations for that event
+       - Toggle Present/Absent per student (updates registrations.attendance_status)
+       - Export CSV of attendance
+       - Doughnut chart with live present/absent/late counts
+  ✅ Certificates Tab:
+       - Upload PNG/JPG certificate template
+       - Click preview to position [STUDENT NAME] placeholder
+       - Issue certificate to individual (certificate_issued = TRUE in registrations)
+       - Bulk Issue All: confirms then issues to all eligible (Present, not yet issued)
+       - Shows only students with attendance_status = 'Present'
+  ✅ Announcements: send notifications with type, priority, message
+  ✅ Analytics: charts for events by category, registrations over time
+  ✅ Jobs Tab: post job, view applicants
+  ✅ Notifications: mark all read, clear all
+
+NEW SUPABASE TABLE: assignments (user_id, event_id, role, status)
+REAL-TIME: single channel 'hc_dashboard_data' subscribes to all relevant tables
+SUPABASE STORAGE: banners/
+
+══════════════════════════════════════════════════════════════════════════════════
+PHASE 4 — EVENT COORDINATOR DASHBOARD                             STATUS: ✅ DONE
+File: src/pages/EventCoordinatorDashboard.tsx
+══════════════════════════════════════════════════════════════════════════════════
+
+FEATURES IMPLEMENTED:
+  ✅ Filtered Overview: Stats only for events assigned to this coordinator
+  ✅ Bento-style UI: 4-column profile grid + modern dashboard shell
+  ✅ Task Management: View, create, and complete tasks for assigned events
+  ✅ Attendance Scanner: Built-in QR scanner + manual ID check-in
+  ✅ Team Management: View assigned volunteers and evaluators for specific events
+  ✅ Real-time: Live updates when participants register or tasks change
+
+══════════════════════════════════════════════════════════════════════════════════
+PHASE 5 — EVALUATOR DASHBOARD                                     STATUS: ✅ DONE
+File: src/pages/EvaluatorDashboard.tsx
+══════════════════════════════════════════════════════════════════════════════════
+
+FEATURES IMPLEMENTED:
+  ✅ Judging Queue: Grid of all submissions for assigned events
+  ✅ Submission Details: View idea, GitHub repo, demo video, and live links
+  ✅ Scoring System: 0-100 score + text feedback stored in scores table
+  ✅ Performance: Fast lookup of assigned events via assignments table
+  ✅ Profile: Bento-box personal info grid
+
+══════════════════════════════════════════════════════════════════════════════════
+PHASE 6 — VOLUNTEER DASHBOARD                                     STATUS: ✅ DONE
+File: src/pages/VolunteerDashboard.tsx
+══════════════════════════════════════════════════════════════════════════════════
+
+FEATURES IMPLEMENTED:
+  ✅ Robust Scanner: Powered by html5-qrcode with camera fallback (Front/Back)
+  ✅ Check-In Logic: Supports both UUID and human-readable (REG-XXXX) IDs
+  ✅ Team Check-In: Scan one lead to mark the entire team as present
+  ✅ Task List: View and mark pending tasks as completed
+  ✅ Connectivity: Works over HTTPS/Localhost with detailed camera diagnostics
+
+══════════════════════════════════════════════════════════════════════════════════
+PHASE 7 — SUPER ADMIN DASHBOARD                                   STATUS: ✅ DONE
+File: src/pages/SuperAdminDashboard.tsx
+══════════════════════════════════════════════════════════════════════════════════
+
+FEATURES IMPLEMENTED:
+  ✅ User Management: Live table of all users with search and role switching
+  ✅ Institution Analytics: Aggregated stats across colleges and departments
+  ✅ Global Announcements: Send notifications to 'all' users instantly
+  ✅ System Health: Monitor event registrations and platform activity
+  ✅ Audit Trail: Basic logging of critical administrative actions
+
+══════════════════════════════════════════════════════════════════════════════════
+PHASE 8 — SHARED COMPONENTS & FINAL POLISH                        STATUS: ✅ DONE
+Files: QRScanner.tsx, DashboardShell.tsx, AuthContext.tsx
+══════════════════════════════════════════════════════════════════════════════════
+
+POLISH APPLIED:
+  ✅ UUID Fix: Demo users now get valid random UUIDs to prevent database errors
+  ✅ Storage Fallback: Demo users use Base64 previews for banners/avatars
+  ✅ Unified Shell: Consistent sidebar, topbar, and notifications across all 6 dashboards
+  ✅ Responsiveness: Mobile-first design for scanning and registration
+  ✅ Database Extensions: uuid-ossp, pgcrypto, etc. added for performance/security
+
+FINAL SQL (run in Supabase after Phase 8):
+  ALTER PUBLICATION supabase_realtime ADD TABLE
+    users, events, jobs, notifications, registrations,
+    applications, tasks, submissions, scores, messages, assignments;
+
+══════════════════════════════════════════════════════════════════════════════════
+SUPABASE SQL FILE: supabase.sql
+WHEN TO RE-EXECUTE:
+══════════════════════════════════════════════════════════════════════════════════
+  ✅ NOW (after Phase 3) — assignments table + mark_attendance function added
+  📋 After Phase 7   — audit_logs table must be added first
+  📋 After Phase 8   — enable Realtime on all tables
+
+HOW TO EXECUTE:
+  1. Open https://supabase.com → your project → SQL Editor
+  2. Paste supabase.sql contents
+  3. Click RUN
+  4. Check Results tab for errors
+
+IMPORTANT: supabase.sql starts with DROP TABLE ... CASCADE so it wipes all data.
+  For production: run only the new CREATE/ALTER/INSERT sections manually.
+
+══════════════════════════════════════════════════════════════════════════════════
+SUPABASE TABLES SUMMARY
+══════════════════════════════════════════════════════════════════════════════════
+  users           - All platform users (all roles)
+  events          - Events created by coordinators
+  jobs            - Internship/job postings
+  notifications   - Platform notifications (user_id = 'all' or specific UID)
+  registrations   - Student event registrations (incl. QR, attendance, certificates)
+  applications    - Job applications
+  tasks           - Tasks assigned to coordinators/volunteers
+  submissions     - Hackathon/competition submissions
+  scores          - Evaluator scores for submissions
+  messages        - Volunteer ↔ Coordinator communication
+  assignments     - Role assignments per event (coordinator, evaluator, volunteer)
+  audit_logs      - Admin action log [ADDED IN PHASE 7]
+
+══════════════════════════════════════════════════════════════════════════════════
+SUPABASE STORAGE BUCKETS
+══════════════════════════════════════════════════════════════════════════════════
+  resumes/        - Student resume PDFs
+  avatars/        - Profile pictures
+  banners/        - Event banner images
+
+══════════════════════════════════════════════════════════════════════════════════
+KEY FUNCTIONS IN supabase.sql
+══════════════════════════════════════════════════════════════════════════════════
+  mark_attendance(p_registration_id, p_scanner_id, p_scanner_name)
+    - Returns { ok, reason, student_name, event_name }
+    - Handles: already_marked, not_found, unauthorized
+    - Roles allowed: coordinator, head_coordinator, volunteer, super_admin
+
+  recalculate_event_slots(target_event_id)
+    - Auto-updates events.slots.filled on every registration change
+
+  sync_event_name_title()
+    - Trigger: ensures events.name and events.title always match
+
+  notify_event_created()
+    - Trigger: inserts notification for all users when a new event is published
+
+  get_user_role(uid)
+    - Returns user role as TEXT for use in RLS policies
+
+══════════════════════════════════════════════════════════════════════════════════
+FINAL VERIFICATION CHECKLIST (after all 8 phases)
+══════════════════════════════════════════════════════════════════════════════════
+  [ ] All 6 dashboards load without errors
+  [ ] Demo credentials work for every role
+  [ ] Google sign-in → profile setup → correct dashboard redirect
+  [ ] Student registers solo event → gets QR pass
+  [ ] Student registers team event → team lead fills all → all get QR
+  [ ] Head Coordinator creates event with banner → visible in student Discover
+  [ ] Head Coordinator assigns team → visible in assignments table
+  [ ] Volunteer scans QR → attendance marked → visible in Head Coordinator Attendance tab
+  [ ] Evaluator scores submission → score appears in scores table
+  [ ] Head Coordinator issues certificate → certificate_issued = TRUE in registrations
+  [ ] Super Admin changes user role → updated in Supabase
+  [ ] npm run build → 0 errors
+
+══════════════════════════════════════════════════════════════════════════════════

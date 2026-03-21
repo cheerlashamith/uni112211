@@ -1,0 +1,5 @@
+{
+  "name": "UniGuild",
+  "description": "A unified university event management platform for students, coordinators, and administrators.",
+  "requestFramePermissions": ["camera"]
+}
