@@ -166,19 +166,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [supabaseUser, setSupabaseUser] = useState<SupabaseUser | null>(null);
   const [loading, setLoading] = useState(true);
   const isInitializingRef = useRef(false);
+  const isAuthChecking = useRef(false);
 
   const handleSession = async (sessionUser: SupabaseUser | null) => {
+    // Avoid double-checking if already in progress
+    if (isAuthChecking.current) return;
+    
     try {
+      isAuthChecking.current = true;
+      console.log('AuthContext: Handling session for user:', sessionUser?.email || 'null');
+      
       if (sessionUser) {
         setSupabaseUser(sessionUser);
 
         let profile = await fetchUserProfile(sessionUser.id);
         if (!profile) {
+          console.log('AuthContext: Profile not found, creating new profile...');
           profile = await createUserProfile(sessionUser);
         } else {
+          console.log('AuthContext: Profile found, syncing role...');
           profile = await syncRoleFromMetadata(sessionUser, profile);
         }
 
+        console.log('AuthContext: Setting current user:', profile);
         setCurrentUser(profile);
       } else {
         setSupabaseUser(null);
@@ -186,9 +196,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     } catch (err) {
       if (!isAuthLockError(err)) {
-        console.error('Session handling error:', err);
+        console.error('AuthContext: Session handling error:', err);
       }
     } finally {
+      isAuthChecking.current = false;
       setLoading(false);
     }
   };
@@ -197,23 +208,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (isInitializingRef.current) return;
     isInitializingRef.current = true;
 
+    // Supabase Auth listener
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      console.log('AuthContext: Auth event changed:', event, session?.user?.email);
+      void handleSession(session?.user || null);
+    });
+
     const initAuth = async () => {
       try {
         const { data: { session } } = await supabase.auth.getSession();
-        await handleSession(session?.user || null);
+        if (session) {
+          console.log('AuthContext: Initial session found:', session.user.email);
+          await handleSession(session.user);
+        } else {
+          console.log('AuthContext: No initial session');
+          setLoading(false);
+        }
       } catch (err) {
         if (!isAuthLockError(err)) {
-          console.error('Auth init error:', err);
+          console.error('AuthContext: Auth init error:', err);
         }
         setLoading(false);
       }
     };
 
     initAuth();
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      void handleSession(session?.user || null);
-    });
 
     return () => subscription.unsubscribe();
   }, []);

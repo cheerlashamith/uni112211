@@ -5,7 +5,7 @@ import {
   Megaphone, BarChart3, User, Clock, CheckCircle2, MoreVertical,
   Download, Search, Filter, Mail, Trash2, Edit, ExternalLink,
   MapPin, Globe, Users2, UserPlus, Award, FileText, Check, Plus, Eye, QrCode, Briefcase, X, XCircle,
-  TrendingUp, ArrowUpRight, ScrollText, CheckSquare, AlertCircle
+  TrendingUp, ArrowUpRight, ScrollText, CheckSquare, AlertCircle, Camera
 } from 'lucide-react';
 import { Bar, Line, Pie, Doughnut } from 'react-chartjs-2';
 import { 
@@ -16,6 +16,7 @@ import {
 import { UniGuildData } from '../data';
 import DashboardShell from '../components/DashboardShell';
 import { motion, AnimatePresence } from 'motion/react';
+import { Html5QrcodeScanner } from 'html5-qrcode';
 import { supabase, handleSupabaseError, OperationType } from '../supabase';
 import { useAuth } from '../context/AuthContext';
 
@@ -53,7 +54,9 @@ function mapHeadCoordinatorJobPayload(jobData: any) {
     skills: Array.isArray(jobData.skills) ? jobData.skills : [],
     is_paid: jobData.isPaid !== undefined ? jobData.isPaid : jobData.is_paid !== undefined ? jobData.is_paid : true,
     stipend: jobData.stipend || '',
-    deadline: jobData.deadline ? new Date(jobData.deadline).toISOString() : null,
+    deadline: jobData.deadline && !isNaN(new Date(jobData.deadline).getTime()) 
+      ? new Date(jobData.deadline).toISOString() 
+      : null,
     app_link: jobData.appLink || jobData.app_link || '',
     website: jobData.website || '',
     domain: jobData.domain || '',
@@ -154,9 +157,12 @@ export default function HeadCoordinatorDashboard() {
   const handleCreateEvent = async (eventData: any): Promise<boolean> => {
     if (!currentUser) return false;
     setIsPublishing(true);
+
     try {
       const eventDate = eventData.startDate || eventData.date;
-      const formattedDate = new Date(eventDate).toISOString();
+      const formattedDate = (eventDate && !isNaN(new Date(eventDate).getTime()))
+        ? new Date(eventDate).toISOString()
+        : new Date().toISOString();
       
       const { bannerUrl, targetAudience, coordinatorEmail, registrationType, maxTeamSize } = eventData;
       const { error } = await supabase.from('events').insert({
@@ -201,6 +207,7 @@ export default function HeadCoordinatorDashboard() {
   const handlePostJob = async (jobData: any): Promise<boolean> => {
     if (!currentUser) return false;
     setIsPostingJob(true);
+
     try {
       const { error } = await supabase.from('jobs').insert({
         ...mapHeadCoordinatorJobPayload(jobData),
@@ -1284,14 +1291,79 @@ function AttendanceTab({ events = [], registrations = [], setNotification }: {
   registrations?: any[],
   setNotification: (n: any) => void 
 }) {
+  const [mode, setMode] = useState<'scan' | 'list'>('list');
   const [selectedEventId, setSelectedEventId] = useState('');
+  const [manualId, setManualId] = useState('');
+  const [isProcessing, setIsProcessing] = useState(false);
+  const scannerRef = useRef<Html5QrcodeScanner | null>(null);
+  const { currentUser } = useAuth();
 
   const filteredRegistrations = registrations.filter(r => r.event_id === selectedEventId);
+
+  useEffect(() => {
+    if (mode === 'scan' && !isProcessing) {
+      const scanner = new Html5QrcodeScanner(
+        "hc-scanner",
+        { fps: 10, qrbox: { width: 250, height: 250 } },
+        false
+      );
+
+      scanner.render(async (text) => {
+        if (isProcessing) return;
+        await scanner.clear();
+        scannerRef.current = null;
+        handleMarkAttendance(text);
+      }, (err) => {});
+      
+      scannerRef.current = scanner;
+    }
+
+    return () => {
+      if (scannerRef.current) {
+        scannerRef.current.clear().catch(err => console.error("Failed to clear scanner", err));
+        scannerRef.current = null;
+      }
+    };
+  }, [mode, isProcessing]);
+
+  const handleMarkAttendance = async (id: string) => {
+    if (!id || !currentUser) return;
+    setIsProcessing(true);
+
+    try {
+      const { data, error } = await supabase.rpc('mark_attendance', {
+        p_registration_id: id,
+        p_scanner_id: currentUser.uid,
+        p_scanner_name: currentUser.email || 'Head Coordinator'
+      });
+
+      if (error) throw error;
+
+      const result = data as any;
+      if (result?.ok) {
+        setNotification({ 
+          message: `Attendance marked for ${result.student_name} (${result.event_name})`, 
+          type: 'success' 
+        });
+        setManualId('');
+        if (mode === 'scan') setMode('list');
+      } else {
+        setNotification({ 
+          message: `Failed: ${result?.reason || 'Unknown error'}`, 
+          type: 'error' 
+        });
+      }
+    } catch (error: any) {
+      setNotification({ message: `Error: ${error.message}`, type: 'error' });
+    } finally {
+      setIsProcessing(false);
+    }
+  };
 
   const handleToggleAttendance = async (regId: string, currentStatus: string) => {
     const newStatus = currentStatus === 'Present' ? 'Absent' : 'Present';
     try {
-      const { error } = await supabase.from('registrations').update({ attendance_status: newStatus }).eq('id', regId);
+      const { error } = await supabase.from('registrations').update({ attendance_status: newStatus, attended: newStatus === 'Present' }).eq('id', regId);
       if (error) throw error;
       setNotification({ message: `Attendance marked as ${newStatus}`, type: 'success' });
     } catch (error: any) {
@@ -1300,123 +1372,182 @@ function AttendanceTab({ events = [], registrations = [], setNotification }: {
   };
 
   const attendanceData = {
-    present: filteredRegistrations.filter(r => r.attendance_status === 'Present').length,
-    absent: filteredRegistrations.filter(r => r.attendance_status === 'Absent').length,
+    present: filteredRegistrations.filter(r => r.attended || r.attendance_status === 'Present').length,
+    absent: filteredRegistrations.filter(r => !r.attended && r.attendance_status === 'Absent').length,
     late: filteredRegistrations.filter(r => r.attendance_status === 'Late').length,
   };
   const totalRegistered = filteredRegistrations.length;
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h3 className="text-2xl font-display font-bold">Attendance Tracking</h3>
+      <div className="flex justify-between items-center bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+        <div>
+          <h3 className="text-2xl font-display font-bold text-gray-900">Attendance Tracking</h3>
+          <p className="text-xs text-gray-500 font-medium">Scan QR codes or enter 7-digit IDs to mark attendance.</p>
+        </div>
         <div className="flex gap-3">
+          <button 
+            onClick={() => setMode(mode === 'scan' ? 'list' : 'scan')}
+            className={`btn-${mode === 'scan' ? 'secondary' : 'primary'} flex items-center gap-2 px-6 py-2.5 shadow-lg transition-all`}
+          >
+            {mode === 'scan' ? <Clock size={18} /> : <QrCode size={18} />}
+            {mode === 'scan' ? 'View List' : 'Scan QR'}
+          </button>
+          
+          <div className="h-10 w-[1px] bg-gray-200 mx-1" />
+
           <select 
-            className="bg-white border border-gray-200 rounded-lg px-4 py-2 text-xs font-bold outline-none focus:border-red-primary"
+            className="bg-gray-50 border border-gray-200 rounded-xl px-4 py-2 text-xs font-bold outline-none focus:border-red-primary focus:ring-4 focus:ring-red-primary/5 transition-all"
             value={selectedEventId}
             onChange={e => setSelectedEventId(e.target.value)}
           >
             <option value="">Select Event</option>
             {events.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
           </select>
-          <button 
-            onClick={() => {
-              const rows = filteredRegistrations.map(r => `${r.student_name},${r.student_id},${r.check_in_time || 'N/A'},${r.attendance_status || 'N/A'}`).join('\n');
-              const csv = `data:text/csv;charset=utf-8,Student,Roll No,Check-in,Status\n${rows}`;
-              const link = document.createElement('a');
-              link.setAttribute('href', encodeURI(csv));
-              link.setAttribute('download', 'attendance.csv');
-              document.body.appendChild(link);
-              link.click();
-              document.body.removeChild(link);
-            }}
-            className="btn-secondary py-2 px-4 text-xs flex items-center gap-2"
-          >
-            <Download size={16} /> Export CSV
-          </button>
         </div>
       </div>
 
-      <div className="grid lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 card overflow-hidden">
-          <table className="w-full text-left">
-            <thead className="bg-gray-50 border-b border-gray-200">
-              <tr>
-                <th className="px-6 py-4 text-[10px] font-bold uppercase text-gray-400">Student</th>
-                <th className="px-6 py-4 text-[10px] font-bold uppercase text-gray-400">Roll No</th>
-                <th className="px-6 py-4 text-[10px] font-bold uppercase text-gray-400">Check-in</th>
-                <th className="px-6 py-4 text-[10px] font-bold uppercase text-gray-400">Status</th>
-                <th className="px-6 py-4 text-[10px] font-bold uppercase text-gray-400 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {filteredRegistrations.length === 0 ? (
-                <tr>
-                  <td colSpan={5} className="px-6 py-10 text-center text-gray-400 italic">
-                    {selectedEventId ? 'No registrations for this event.' : 'Please select an event to view attendance.'}
-                  </td>
-                </tr>
-              ) : (
-                filteredRegistrations.map(reg => (
-                  <tr key={reg.id} className="hover:bg-gray-50 transition-all">
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-3">
-                        <img src={`https://i.pravatar.cc/300?u=${reg.student_id}`} className="w-8 h-8 rounded-full" alt="" />
-                        <p className="text-sm font-bold">{reg.student_name}</p>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 font-mono text-xs">{reg.student_id}</td>
-                    <td className="px-6 py-4 text-xs">{reg.check_in_time ? new Date(reg.check_in_time).toLocaleTimeString() : 'N/A'}</td>
-                    <td className="px-6 py-4">
-                      <span className={`text-[10px] px-2 py-0.5 rounded font-bold uppercase ${
-                        reg.attendance_status === 'Present' ? 'bg-green-50 text-green-600' :
-                        reg.attendance_status === 'Absent' ? 'bg-red-50 text-red-600' :
-                        'bg-amber-50 text-amber-600'
-                      }`}>
-                        {reg.attendance_status || 'Pending'}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 text-right">
-                      <button 
-                        onClick={() => handleToggleAttendance(reg.id, reg.attendance_status)}
-                        className="p-2 text-gray-400 hover:text-red-primary"
-                      >
-                        <Check size={16} />
-                      </button>
-                    </td>
+      {mode === 'scan' ? (
+        <div className="grid md:grid-cols-2 gap-8">
+          <div className="card p-8">
+            <h4 className="text-lg font-bold mb-6 flex items-center gap-2">
+              <Camera size={20} className="text-red-primary" />
+              Live Scanner
+            </h4>
+            <div id="hc-scanner" className="overflow-hidden rounded-2xl border-2 border-dashed border-gray-200" />
+            <p className="text-[10px] text-gray-400 mt-4 text-center font-bold uppercase tracking-widest">
+              Position the QR code within the frame to scan
+            </p>
+          </div>
+
+          <div className="card p-8 flex flex-col justify-center">
+            <h4 className="text-lg font-bold mb-2">Manual Entry</h4>
+            <p className="text-xs text-gray-500 mb-6 font-medium">Enter the 7-digit unique registration ID manually.</p>
+            
+            <div className="space-y-4">
+              <input 
+                type="text" 
+                maxLength={7}
+                placeholder="Ex: 1234567"
+                value={manualId}
+                onChange={e => setManualId(e.target.value.replace(/\D/g, ''))}
+                className="w-full bg-gray-50 border border-gray-200 rounded-2xl p-4 text-2xl font-mono font-bold text-center tracking-[0.5em] outline-none focus:border-red-primary focus:ring-4 focus:ring-red-primary/5 transition-all"
+              />
+              <button 
+                onClick={() => handleMarkAttendance(manualId)}
+                disabled={manualId.length !== 7 || isProcessing}
+                className="btn-primary w-full py-4 text-sm font-bold shadow-xl shadow-red-primary/20 disabled:opacity-50 disabled:grayscale transition-all"
+              >
+                {isProcessing ? 'Verifying...' : 'Verify & Mark Attendance'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="grid lg:grid-cols-3 gap-6">
+          <div className="lg:col-span-2 card overflow-hidden border-transparent shadow-xl">
+            <div className="bg-gray-50/50 px-6 py-4 border-b border-gray-100 flex justify-between items-center">
+              <span className="text-[10px] font-bold uppercase text-gray-400 tracking-widest">Registrations List</span>
+              <button 
+                onClick={() => {
+                  const rows = filteredRegistrations.map(r => `${r.full_name || r.student_name},${r.student_id || r.roll_no},${r.attended_at ? new Date(r.attended_at).toLocaleString() : 'N/A'},${r.attended ? 'Present' : 'Absent'}`).join('\n');
+                  const csv = `data:text/csv;charset=utf-8,Student,ID,Check-in,Status\n${rows}`;
+                  const link = document.createElement('a');
+                  link.setAttribute('href', encodeURI(csv));
+                  link.setAttribute('download', `Attendance-${selectedEventId || 'All'}.csv`);
+                  link.click();
+                }}
+                className="text-[10px] font-bold text-red-primary hover:underline"
+              >
+                Download CSV
+              </button>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead className="bg-white border-b border-gray-100">
+                  <tr>
+                    <th className="px-6 py-4 text-[10px] font-bold uppercase text-gray-400">Student</th>
+                    <th className="px-6 py-4 text-[10px] font-bold uppercase text-gray-400">ID / Roll No</th>
+                    <th className="px-6 py-4 text-[10px] font-bold uppercase text-gray-400">Status</th>
+                    <th className="px-6 py-4 text-[10px] font-bold uppercase text-gray-400 text-right">Actions</th>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-        <div className="card p-6">
-          <h4 className="text-sm font-bold uppercase text-gray-400 mb-6 tracking-widest">Attendance Breakdown</h4>
-          <div className="h-64 flex justify-center">
-            <Pie 
-              data={{
-                labels: ['Present', 'Absent', 'Late'],
-                datasets: [{
-                  data: [attendanceData.present, attendanceData.absent, attendanceData.late],
-                  backgroundColor: ['#16a34a', '#f40000', '#d97706'],
-                  borderWidth: 0
-                }]
-              }}
-              options={{ maintainAspectRatio: false }}
-            />
-          </div>
-          <div className="mt-6 space-y-3">
-            <div className="flex justify-between text-xs">
-              <span className="text-gray-500">Total Registered</span>
-              <span className="font-bold">{totalRegistered}</span>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {filteredRegistrations.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="px-6 py-12 text-center text-gray-400 italic font-medium">
+                        {selectedEventId ? 'No registrations found for this event.' : 'Please select an event to view attendees.'}
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredRegistrations.map(reg => (
+                      <tr key={reg.id} className="hover:bg-red-50/30 transition-all group">
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-full bg-red-100 flex items-center justify-center text-red-primary font-bold text-xs">
+                              {(reg.full_name || reg.student_name || 'S')[0]}
+                            </div>
+                            <p className="text-sm font-bold text-gray-900">{reg.full_name || reg.student_name}</p>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 font-mono text-xs text-gray-500">{reg.student_id || reg.roll_no || reg.unique_id}</td>
+                        <td className="px-6 py-4">
+                          <span className={`text-[9px] px-2.5 py-1 rounded-full font-bold uppercase tracking-wider ${
+                            reg.attended ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
+                          }`}>
+                            {reg.attended ? 'Present' : 'Absent'}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 text-right">
+                          <button 
+                            onClick={() => handleToggleAttendance(reg.id, reg.attended ? 'Present' : 'Absent')}
+                            className={`p-2 rounded-lg transition-all ${reg.attended ? 'text-green-600 bg-green-50' : 'text-gray-400 hover:text-red-primary hover:bg-red-50'}`}
+                          >
+                            <Check size={16} />
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
             </div>
-            <div className="flex justify-between text-xs">
-              <span className="text-gray-500">Avg Duration</span>
-              <span className="font-bold">6h 12m</span>
+          </div>
+
+          <div className="space-y-6">
+            <div className="card p-6">
+              <h4 className="text-sm font-bold uppercase text-gray-400 mb-6 tracking-widest">Live Stats</h4>
+              <div className="h-48 flex justify-center">
+                <Doughnut 
+                  data={{
+                    labels: ['Present', 'Absent'],
+                    datasets: [{
+                      data: [attendanceData.present, totalRegistered - attendanceData.present],
+                      backgroundColor: ['#f40000', '#f3f4f6'],
+                      borderWidth: 0
+                    }]
+                  }}
+                  options={{ 
+                    maintainAspectRatio: false,
+                    cutout: '75%',
+                    plugins: { legend: { display: false } }
+                  }}
+                />
+              </div>
+              <div className="mt-8 space-y-3">
+                <div className="flex justify-between items-center p-3 bg-gray-50 rounded-xl">
+                  <span className="text-xs font-bold text-gray-600">Present</span>
+                  <span className="text-sm font-mono font-bold text-green-600">{attendanceData.present}</span>
+                </div>
+                <div className="flex justify-between items-center p-3 bg-gray-50 rounded-xl">
+                  <span className="text-xs font-bold text-gray-600">Pending</span>
+                  <span className="text-sm font-mono font-bold text-amber-600">{totalRegistered - attendanceData.present}</span>
+                </div>
+              </div>
             </div>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

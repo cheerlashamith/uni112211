@@ -54,7 +54,9 @@ function mapJobPayload(jobData: any) {
     skills: Array.isArray(jobData.skills) ? jobData.skills : [],
     is_paid: jobData.isPaid !== undefined ? jobData.isPaid : jobData.is_paid !== undefined ? jobData.is_paid : true,
     stipend: jobData.stipend || '',
-    deadline: jobData.deadline ? new Date(jobData.deadline).toISOString() : null,
+    deadline: jobData.deadline && !isNaN(new Date(jobData.deadline).getTime()) 
+      ? new Date(jobData.deadline).toISOString() 
+      : null,
     app_link: jobData.appLink || jobData.app_link || '',
     website: jobData.website || '',
     domain: jobData.domain || '',
@@ -153,20 +155,31 @@ export default function SuperAdminDashboard() {
 
   const handleCreateEvent = async (eventData: any): Promise<boolean> => {
     setIsPublishing(true);
+    
     try {
-      const formattedDate = new Date(eventData.date).toISOString();
-      const { bannerUrl, targetAudience, coordinatorEmail, registrationType, maxTeamSize, ...rest } = eventData;
+      const eventDate = eventData.startDate || eventData.date;
+      const formattedDate = (eventDate && !isNaN(new Date(eventDate).getTime()))
+        ? new Date(eventDate).toISOString()
+        : new Date().toISOString();
       const { error } = await supabase.from('events').insert({
-        ...rest,
+        name: eventData.name,
         title: eventData.name,
+        category: eventData.category || 'Hackathon',
+        host: eventData.host || 'All',
+        location: eventData.location || '',
+        description: eventData.description || '',
         date: formattedDate,
-        banner_url: bannerUrl || '',
-        coordinator_email: coordinatorEmail || '',
-        registration_type: registrationType || 'single',
-        max_team_size: parseInt(maxTeamSize) || 1,
-        target_audience: targetAudience || 'All Students',
+        start_date: (eventData.startDate && !isNaN(new Date(eventData.startDate).getTime())) ? new Date(eventData.startDate).toISOString() : null,
+        end_date: (eventData.endDate && !isNaN(new Date(eventData.endDate).getTime())) ? new Date(eventData.endDate).toISOString() : null,
+        banner_url: eventData.bannerUrl || '',
+        coordinator_email: eventData.coordinatorEmail || '',
+        registration_type: eventData.registrationType || 'single',
+        max_team_size: parseInt(eventData.maxTeamSize) || 1,
+        target_audience: eventData.targetAudience || 'All Students',
         created_by: currentUser?.uid,
-        created_at: new Date().toISOString()
+        created_at: new Date().toISOString(),
+        status: 'Upcoming',
+        slots: { filled: 0, total: parseInt(eventData.capacity) || 100 }
       });
 
       if (error) {
@@ -190,6 +203,7 @@ export default function SuperAdminDashboard() {
 
   const handlePostJob = async (jobData: any): Promise<boolean> => {
     setIsPostingJob(true);
+    
     try {
       const { error } = await supabase.from('jobs').insert({
         ...mapJobPayload(jobData),
@@ -719,7 +733,7 @@ function CollegesTab({ setNotification, setConfirmModal, setPromptModal }: {
           for (const email of emails) {
             const { data: userData } = await supabase
               .from('users')
-              .select('id')
+              .select('uid')
               .eq('email', email)
               .eq('role', 'student')
               .maybeSingle();
@@ -728,7 +742,7 @@ function CollegesTab({ setNotification, setConfirmModal, setPromptModal }: {
               await supabase
                 .from('users')
                 .update({ college: selectedCollege })
-                .eq('id', userData.id);
+                .eq('uid', userData.uid);
               successCount++;
             }
           }
@@ -754,7 +768,7 @@ function CollegesTab({ setNotification, setConfirmModal, setPromptModal }: {
           await supabase
             .from('users')
             .update({ college: 'Unassigned' })
-            .eq('id', id);
+            .eq('uid', id);
           setNotification({ message: `${name} removed from ${selectedCollege}`, type: 'success' });
         } catch (error) {
           handleSupabaseError(error, OperationType.UPDATE, `users/${id}`);
@@ -777,7 +791,7 @@ function CollegesTab({ setNotification, setConfirmModal, setPromptModal }: {
               setNotification({ message: "Student not found with this email.", type: 'error' });
               return;
             }
-            const { error } = await supabase.from('users').update({ college: selectedCollege }).eq('id', userData.id);
+            const { error } = await supabase.from('users').update({ college: selectedCollege }).eq('uid', userData.uid);
             if (error) {
               setNotification({ message: `Failed to add student: ${error.message}`, type: 'error' });
               return;
@@ -805,7 +819,7 @@ function CollegesTab({ setNotification, setConfirmModal, setPromptModal }: {
               setNotification({ message: "Coordinator not found with this email.", type: 'error' });
               return;
             }
-            const { error } = await supabase.from('users').update({ college: selectedCollege }).eq('id', userData.id);
+            const { error } = await supabase.from('users').update({ college: selectedCollege }).eq('uid', userData.uid);
             if (error) {
               setNotification({ message: `Failed to add coordinator: ${error.message}`, type: 'error' });
               return;
@@ -1189,8 +1203,8 @@ function UsersTab({ setNotification, setConfirmModal, setPromptModal }: {
       message: `Are you sure you want to permanently delete ${name}?`,
       onConfirm: async () => {
         try {
-          const userEmail = users.find(u => u.id === id)?.email || name;
-          const { error } = await supabase.from('users').delete().eq('id', id);
+          const userEmail = users.find(u => (u.uid || u.id) === id)?.email || name;
+          const { error } = await supabase.from('users').delete().eq('uid', id);
           if (error) {
             setNotification({ message: `Delete failed: ${error.message}`, type: 'error' });
             return;
@@ -1437,7 +1451,7 @@ function UsersTab({ setNotification, setConfirmModal, setPromptModal }: {
                     await supabase
                       .from('users')
                       .update({ role: roleModal.selectedRole })
-                      .eq('id', roleModal.user.id);
+                      .eq('uid', roleModal.user.uid);
 
                     await supabase.from('audit_logs').insert({
                       action: `Role changed from ${oldRole} to ${roleModal.selectedRole} for user ${roleModal.user.email}`,

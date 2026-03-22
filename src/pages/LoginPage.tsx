@@ -21,8 +21,19 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
-  const { loginWithEmail, loginWithGoogle, loginAsDemo } = useAuth();
+  const { currentUser, loading: authLoading, loginWithEmail, loginWithGoogle } = useAuth();
   const DEMO_PASSWORD = 'Demo@12345';
+
+  // Redirect if already authenticated
+  React.useEffect(() => {
+    if (!authLoading && currentUser) {
+      if (currentUser.role === 'student' && !currentUser.profileCompleted) {
+        navigate('/complete-profile');
+      } else {
+        navigate('/dashboard');
+      }
+    }
+  }, [currentUser, authLoading, navigate]);
 
   const getErrorMessage = (code: string): string => {
     return AUTH_ERROR_MESSAGES[code] || 'Login failed. Please check your credentials.';
@@ -57,31 +68,13 @@ export default function LoginPage() {
     setError(null);
     try {
       await loginWithGoogle();
-      navigate('/dashboard');
+      // Browser will redirect to Google then back to /dashboard
     } catch (err: any) {
       console.error(err);
       const errorCode = err.code || '';
       setError(getErrorMessage(errorCode) || 'Login with Google failed. Please try again.');
     } finally {
       setLoading(false);
-    }
-  };
-
-  const demoCredentials = [
-    { role: 'student' as UserRole, label: 'Student', email: 'student@uniguild.edu', icon: '🎓', path: 'student' },
-    { role: 'volunteer' as UserRole, label: 'Volunteer', email: 'volunteer@uniguild.edu', icon: '🤝', path: 'volunteer' },
-    { role: 'coordinator' as UserRole, label: 'Event Coord', email: 'coordinator@uniguild.edu', icon: '📅', path: 'eventcoordinator' },
-    { role: 'head_coordinator' as UserRole, label: 'Head Coord', email: 'head@uniguild.edu', icon: '👑', path: 'headcoordinator' },
-    { role: 'evaluator' as UserRole, label: 'Evaluator', email: 'evaluator@uniguild.edu', icon: '⚖️', path: 'evaluator' },
-    { role: 'super_admin' as UserRole, label: 'Super Admin', email: 'admin@uniguild.edu', icon: '🛡️', path: 'superadmin' },
-  ];
-
-  const handleDemoLogin = (cred: typeof demoCredentials[0]) => {
-    try {
-      loginAsDemo(cred.role, cred.email);
-      navigate(`/dashboard/${cred.path}`);
-    } catch (err: any) {
-      setError(`Demo login failed. Please try again.`);
     }
   };
 
@@ -152,34 +145,6 @@ export default function LoginPage() {
               </div>
             </div>
           )}
-
-          <div className="mb-8">
-            <button 
-              onClick={() => handleDemoLogin(demoCredentials[0])}
-              disabled={loading}
-              className="w-full py-4 bg-red-primary text-white rounded-2xl font-bold flex items-center justify-center gap-3 shadow-lg shadow-red-primary/20 hover:scale-[1.02] transition-all active:scale-95 disabled:opacity-50"
-            >
-              <Zap size={20} fill="currentColor" />
-              Quick Demo Access (Student)
-            </button>
-            <div className="mt-4 p-4 bg-gray-50 border border-gray-200 rounded-2xl">
-              <p className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] mb-3 text-center">Other Roles</p>
-              <p className="text-[10px] text-center text-gray-500 mb-3">Common demo password: <span className="font-bold text-red-primary">{DEMO_PASSWORD}</span></p>
-              <div className="grid grid-cols-3 gap-2">
-                {demoCredentials.slice(1).map(cred => (
-                  <button
-                    key={cred.role}
-                    onClick={() => handleDemoLogin(cred)}
-                    disabled={loading}
-                    className="flex flex-col items-center gap-1 p-2 bg-white border border-gray-100 rounded-xl hover:border-red-primary transition-all disabled:opacity-50"
-                  >
-                    <span className="text-lg">{cred.icon}</span>
-                    <span className="text-[8px] font-bold uppercase truncate w-full text-center">{cred.label}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
 
           <form onSubmit={handleLogin} className="space-y-6">
             <div className="space-y-4">

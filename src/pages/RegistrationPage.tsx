@@ -20,7 +20,18 @@ export default function RegistrationPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
-  const { loginWithGoogle } = useAuth();
+  const { currentUser, loading: authLoading, loginWithGoogle } = useAuth();
+
+  // Redirect if already authenticated
+  React.useEffect(() => {
+    if (!authLoading && currentUser) {
+      if (currentUser.role === 'student' && !currentUser.profileCompleted) {
+        navigate('/complete-profile');
+      } else {
+        navigate('/dashboard');
+      }
+    }
+  }, [currentUser, authLoading, navigate]);
 
   const [formData, setFormData] = useState({
     email: '',
@@ -83,6 +94,7 @@ export default function RegistrationPage() {
     setError(null);
     try {
       await loginWithGoogle();
+      // Browser will redirect to Google then back to /dashboard
     } catch (err: any) {
       console.error(err);
       const errorCode = err.code || '';

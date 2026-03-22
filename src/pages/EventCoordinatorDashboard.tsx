@@ -657,35 +657,33 @@ function AttendanceTab({ coordinatorId, coordinatorName, assignedEventIds, myEve
         {mode === 'scan' ? (
           <div className="space-y-6">
             {!scanResult && !success && !error ? (
-              <div className="space-y-6">
+              <div className="space-y-8">
                 <div id="reader-coordinator" className="overflow-hidden rounded-3xl border-4 border-red-primary shadow-2xl bg-black min-h-[400px]" />
-                <div>
+                <div className="text-center">
                   <h3 className="text-2xl font-display font-bold">Participant Check-In</h3>
                   <p className="text-sm text-gray-500 mt-2 px-8">Scan the student's QR code from their UniGuild event pass.</p>
                 </div>
                 
-                <div className="pt-6 border-t border-gray-100">
-                  <p className="text-[10px] font-bold text-gray-400 uppercase mb-3">Manual Entry</p>
-                  <div className="flex flex-col sm:flex-row gap-2 max-w-md mx-auto">
-                    <input 
-                      type="text" 
-                      value={manualId}
-                      onChange={(e) => setManualId(e.target.value)}
-                      placeholder="Enter Registration ID" 
-                      className="flex-1 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm outline-none focus:border-red-primary focus:bg-white transition-all shadow-inner"
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' && manualId.trim()) {
-                          handleMarkAttendance(manualId.trim());
-                        }
-                      }}
-                    />
-                    <button 
-                      onClick={() => manualId.trim() && handleMarkAttendance(manualId.trim())}
-                      disabled={!manualId.trim() || isProcessing}
-                      className="btn-primary px-6 py-3 text-sm flex items-center justify-center gap-2 whitespace-nowrap disabled:opacity-50"
-                    >
-                      <Check size={18} /> Mark Present
-                    </button>
+                <div className="pt-8 border-t border-gray-100">
+                  <div className="card p-6 bg-gray-50/50">
+                    <p className="text-[10px] font-bold text-gray-400 uppercase mb-4 tracking-widest text-center">Manual Entry (7-Digit ID)</p>
+                    <div className="flex flex-col gap-4 max-w-sm mx-auto">
+                      <input 
+                        type="text" 
+                        maxLength={7}
+                        value={manualId}
+                        onChange={(e) => setManualId(e.target.value.replace(/\D/g, ''))}
+                        placeholder="Ex: 1234567" 
+                        className="w-full bg-white border border-gray-200 rounded-2xl px-4 py-4 text-2xl font-mono font-bold text-center tracking-[0.5em] outline-none focus:border-red-primary focus:ring-4 focus:ring-red-primary/5 transition-all"
+                      />
+                      <button 
+                        onClick={() => handleMarkAttendance(manualId)}
+                        disabled={manualId.length !== 7 || isProcessing}
+                        className="btn-primary w-full py-4 text-sm font-bold shadow-xl shadow-red-primary/20 disabled:opacity-50 transition-all font-display"
+                      >
+                        {isProcessing ? 'Verifying...' : 'Verify & Mark Attendance'}
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -699,16 +697,16 @@ function AttendanceTab({ coordinatorId, coordinatorName, assignedEventIds, myEve
                 ) : (
                   <>
                     {success && (
-                      <div className="flex flex-col items-center gap-4">
+                      <div className="flex flex-col items-center gap-4 text-center">
                         <div className="w-24 h-24 bg-green-100 text-green-600 rounded-full flex items-center justify-center">
                           <Check size={48} />
                         </div>
                         <h3 className="text-2xl font-display font-bold text-green-600">Verified Successfully</h3>
-                        <p className="text-lg text-gray-600">{success}</p>
+                        <p className="text-lg text-gray-600 font-bold">{success}</p>
                       </div>
                     )}
                     {error && (
-                      <div className="flex flex-col items-center gap-4">
+                      <div className="flex flex-col items-center gap-4 text-center">
                         <div className="w-24 h-24 bg-red-100 text-red-primary rounded-full flex items-center justify-center">
                           <X size={48} />
                         </div>
@@ -718,9 +716,9 @@ function AttendanceTab({ coordinatorId, coordinatorName, assignedEventIds, myEve
                     )}
                     <button 
                       onClick={resetScanner}
-                      className="btn-primary w-full max-w-xs mx-auto py-4 text-lg"
+                      className="btn-primary w-full py-4 text-lg mt-4 shadow-xl shadow-red-primary/10"
                     >
-                      Scan Next
+                      Scan Next Pass
                     </button>
                   </>
                 )}

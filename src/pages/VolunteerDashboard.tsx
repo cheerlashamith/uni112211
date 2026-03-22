@@ -471,12 +471,14 @@ function AttendanceTab({ volunteerId, volunteerName, setNotification }: { volunt
         
         for (const reg of teamRegs) {
           if (!reg.attended) {
-            await supabase.from('registrations').update({
-              attended: true,
-              attended_at: new Date().toISOString(),
-              scanned_by: volunteerId,
-              scanned_by_name: volunteerName
-            }).eq('id', reg.id);
+            const { data, error } = await supabase.rpc('mark_attendance', {
+              p_registration_id: reg.id,
+              p_scanner_id: volunteerId,
+              p_scanner_name: volunteerName,
+            });
+            if (error) {
+              console.error('Error marking team member attendance:', error);
+            }
           }
         }
         
@@ -491,6 +493,7 @@ function AttendanceTab({ volunteerId, volunteerName, setNotification }: { volunt
   };
 
   const handleMarkAttendance = async (registrationId: string) => {
+    if (!registrationId) return;
     setIsProcessing(true);
     setError(null);
     setSuccess(null);
@@ -498,7 +501,6 @@ function AttendanceTab({ volunteerId, volunteerName, setNotification }: { volunt
 
     try {
       // First, get the registration to check for team_id
-      // First, get the registration to check for team_id or identifying by unique_id
       const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-5][0-9a-f]{3}-[089ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(registrationId);
       
       let query = supabase.from('registrations').select('*');
@@ -525,21 +527,51 @@ function AttendanceTab({ volunteerId, volunteerName, setNotification }: { volunt
           setSuccess(`Success! Attendance marked for ${regData.student_name || 'participant'}`);
         }
       } else {
-        // Mark single attendance
-        const { error: updateError } = await supabase.from('registrations').update({
-          attended: true,
-          attended_at: new Date().toISOString(),
-          scanned_by: volunteerId,
-          scanned_by_name: volunteerName
-        }).eq('id', regData.id).eq('attended', false);
+        // Mark single attendance using RPC
+        const { data, error: rpcError } = await supabase.rpc('mark_attendance', {
+          p_registration_id: regData.id,
+          p_scanner_id: volunteerId,
+          p_scanner_name: volunteerName,
+        });
 
-        if (updateError) {
-          setError('Could not mark attendance. Please try again.');
+        if (rpcError) {
+          setError('Failed to verify pass. Please try again.');
           setIsProcessing(false);
           return;
         }
 
-        setSuccess(`Success! Attendance marked for ${regData.student_name || 'participant'}`);
+        const result = data as {
+          ok?: boolean;
+          reason?: string;
+          student_name?: string;
+          event_name?: string;
+        } | null;
+
+        if (!result?.ok) {
+          if (result?.reason === 'already_marked') {
+            setError(`Already Marked: Attendance for ${result.event_name || 'this event'} was already recorded.`);
+            setIsProcessing(false);
+            return;
+          }
+
+          if (result?.reason === 'not_found') {
+            setError('Invalid Pass: Registration not found.');
+            setIsProcessing(false);
+            return;
+          }
+
+          if (result?.reason === 'unauthorized') {
+            setError('You are not allowed to mark attendance.');
+            setIsProcessing(false);
+            return;
+          }
+
+          setError('Could not mark attendance. Please retry.');
+          setIsProcessing(false);
+          return;
+        }
+
+        setSuccess(`Success! Attendance marked for ${result.student_name || 'participant'} - ${result.event_name || 'event'}`);
       }
     } catch (err) {
       setError("Failed to mark attendance. Please try again.");
@@ -597,7 +629,7 @@ function AttendanceTab({ volunteerId, volunteerName, setNotification }: { volunt
 
           {/* Scanner or Success/Error State */}
           {!scanResult && !success && !error ? (
-            <div className="space-y-6">
+            <div className="space-y-8">
               <div className="overflow-hidden rounded-3xl border-4 border-red-primary shadow-2xl bg-black min-h-[300px]">
                 <QRScanner 
                   onScanSuccess={(id) => {
@@ -611,12 +643,35 @@ function AttendanceTab({ volunteerId, volunteerName, setNotification }: { volunt
               </div>
 
               <div className="text-center">
-                <h3 className="text-xl font-display font-bold">Scan Participant Pass</h3>
-                <p className="text-xs text-gray-500 mt-2">Point the camera at the student's event pass QR code. Use "Enter ID manually" in the scanner if camera is unavailable.</p>
+                <h3 className="text-2xl font-display font-bold">Scan Participant Pass</h3>
+                <p className="text-sm text-gray-500 mt-2">Point the camera at the student's event pass QR code.</p>
+              </div>
+              
+              <div className="pt-8 border-t border-gray-100">
+                <div className="card p-6 bg-gray-50/50">
+                  <p className="text-[10px] font-bold text-gray-400 uppercase mb-4 tracking-widest text-center">Manual Entry (7-Digit ID)</p>
+                  <div className="flex flex-col gap-4 max-w-sm mx-auto">
+                    <input 
+                      type="text" 
+                      maxLength={7}
+                      value={manualId}
+                      onChange={(e) => setManualId(e.target.value.replace(/\D/g, ''))}
+                      placeholder="Ex: 1234567" 
+                      className="w-full bg-white border border-gray-200 rounded-2xl px-4 py-4 text-2xl font-mono font-bold text-center tracking-[0.5em] outline-none focus:border-red-primary focus:ring-4 focus:ring-red-primary/5 transition-all"
+                    />
+                    <button 
+                      onClick={() => handleMarkAttendance(manualId)}
+                      disabled={manualId.length !== 7 || isProcessing}
+                      className="btn-primary w-full py-4 text-sm font-bold shadow-xl shadow-red-primary/20 disabled:opacity-50 disabled:grayscale transition-all"
+                    >
+                      {isProcessing ? 'Verifying...' : 'Verify & Mark Attendance'}
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
           ) : (
-            <div className="card p-8 space-y-6">
+            <div className="card p-12 space-y-6">
               {isProcessing ? (
                 <div className="flex flex-col items-center gap-4 py-8">
                   <div className="w-16 h-16 border-4 border-red-primary border-t-transparent rounded-full animate-spin" />
@@ -625,19 +680,19 @@ function AttendanceTab({ volunteerId, volunteerName, setNotification }: { volunt
               ) : (
                 <>
                   {success && (
-                    <div className="flex flex-col items-center gap-4">
+                    <div className="flex flex-col items-center gap-4 text-center">
                       <div className="w-24 h-24 bg-green-100 text-green-600 rounded-full flex items-center justify-center">
                         <Check size={48} />
                       </div>
                       <h3 className="text-2xl font-display font-bold text-green-600">Attendance Recorded</h3>
-                      <p className="text-lg text-gray-600 text-center">{success}</p>
+                      <p className="text-lg text-gray-600 font-bold">{success}</p>
                       
                       {teamMembers.length > 0 && (
-                        <div className="w-full bg-green-50 rounded-xl p-4">
-                          <p className="text-sm font-bold text-green-700 mb-2">Team Members Marked:</p>
+                        <div className="w-full bg-green-50 rounded-xl p-4 mt-4 text-left">
+                          <p className="text-xs font-bold text-green-700 mb-2 uppercase tracking-wider">Team Members Marked:</p>
                           <div className="flex flex-wrap gap-2">
                             {teamMembers.map((m: any) => (
-                              <span key={m.id} className="bg-white px-3 py-1 rounded-full text-xs font-bold text-green-700 border border-green-200">
+                              <span key={m.id} className="bg-white px-3 py-1 rounded-full text-[10px] font-bold text-green-700 border border-green-200 shadow-sm">
                                 {m.student_name}
                               </span>
                             ))}
@@ -647,15 +702,15 @@ function AttendanceTab({ volunteerId, volunteerName, setNotification }: { volunt
                     </div>
                   )}
                   {error && (
-                    <div className="flex flex-col items-center gap-4">
+                    <div className="flex flex-col items-center gap-4 text-center">
                       <div className="w-24 h-24 bg-red-100 text-red-primary rounded-full flex items-center justify-center">
                         <X size={48} />
                       </div>
-                      <h3 className="text-2xl font-display font-bold text-red-primary">Scan Failed</h3>
-                      <p className="text-lg text-gray-600 text-center">{error}</p>
+                      <h3 className="text-2xl font-display font-bold text-red-primary">Verification Failed</h3>
+                      <p className="text-lg text-gray-600">{error}</p>
                     </div>
                   )}
-                  <button onClick={resetScanner} className="btn-primary w-full py-4 text-lg">
+                  <button onClick={resetScanner} className="btn-primary w-full py-4 text-lg mt-6 shadow-xl shadow-red-primary/10">
                     Scan Next Pass
                   </button>
                 </>
@@ -666,26 +721,30 @@ function AttendanceTab({ volunteerId, volunteerName, setNotification }: { volunt
       ) : (
         <div className="space-y-4 max-w-lg mx-auto">
           {history.length === 0 ? (
-            <div className="text-center py-12 text-gray-400">
-              <History size={48} className="mx-auto mb-4 opacity-20" />
-              <p className="text-sm font-medium">No attendance records yet.</p>
+            <div className="text-center py-24 text-gray-400 card border-dashed">
+              <History size={64} className="mx-auto mb-4 opacity-10" />
+              <p className="text-lg font-medium opacity-50 tracking-tight">No attendance records yet.</p>
             </div>
           ) : (
             history.map((item: any) => (
-              <div key={item.id} className="flex items-center justify-between p-4 bg-white border border-gray-100 rounded-xl">
+              <div key={item.id} className="flex items-center justify-between p-4 bg-white border border-gray-100 rounded-2xl hover:shadow-md transition-all">
                 <div className="flex items-center gap-4">
-                  <div className="w-10 h-10 rounded-full bg-green-50 flex items-center justify-center text-green-600">
+                  <div className="w-10 h-10 rounded-xl bg-green-50 text-green-600 flex items-center justify-center">
                     <CheckCircle2 size={18} />
                   </div>
                   <div>
-                    <p className="text-sm font-bold">{item.studentName}</p>
-                    <p className="text-[10px] text-gray-500 uppercase font-bold">{item.eventName} • {item.attendedAt ? new Date(item.attendedAt).toLocaleTimeString() : ''}</p>
+                    <p className="text-sm font-bold text-gray-900">{item.studentName}</p>
+                    <p className="text-[10px] text-gray-500 uppercase font-bold tracking-tight">
+                      {item.eventName} • {item.attendedAt ? new Date(item.attendedAt).toLocaleTimeString() : ''}
+                    </p>
                     {item.team_id && (
-                      <span className="text-[8px] bg-red-50 text-red-600 px-2 py-0.5 rounded font-bold uppercase">Team</span>
+                      <span className="inline-block mt-1 text-[8px] bg-red-50 text-red-600 px-1.5 py-0.5 rounded font-black uppercase tracking-tighter">Team</span>
                     )}
                   </div>
                 </div>
-                <span className="text-[10px] font-bold text-green-600 uppercase">Verified</span>
+                <div className="text-right">
+                  <span className="text-[10px] font-black text-green-600 uppercase bg-green-50 px-2 py-1 rounded-lg">Verified</span>
+                </div>
               </div>
             ))
           )}

@@ -96,8 +96,13 @@ export default function StudentDashboard() {
   };
 
   const fetchEvents = async () => {
-    const { data } = await supabase.from('events').select('*').order('created_at', { ascending: false });
+    const { data, error } = await supabase.from('events').select('*').order('created_at', { ascending: false });
+    if (error) {
+      console.error('Error fetching events:', error);
+      return;
+    }
     if (data) {
+      console.log(`Fetched ${data.length} events`);
       setEvents(data.map((e: any) => ({ 
         ...e, 
         name: e.name || e.title || 'Upcoming Event',
@@ -110,8 +115,13 @@ export default function StudentDashboard() {
   };
 
   const fetchJobs = async () => {
-    const { data } = await supabase.from('jobs').select('*').order('created_at', { ascending: false });
+    const { data, error } = await supabase.from('jobs').select('*').order('created_at', { ascending: false });
+    if (error) {
+      console.error('Error fetching jobs:', error);
+      return;
+    }
     if (data) {
+      console.log(`Fetched ${data.length} jobs`);
       setJobs(data.map((j: any) => ({ 
         ...j, 
         appLink: j.app_link, 
@@ -259,7 +269,7 @@ export default function StudentDashboard() {
     }
 
     try {
-      const shortId = Math.random().toString(36).substring(2, 8).toUpperCase();
+      const shortId = String(Math.floor(1000000 + Math.random() * 9000000));
       const teamId = teamDetails ? `T-${Math.random().toString(36).substring(2, 8).toUpperCase()}` : null;
 
       const regData = {
@@ -375,10 +385,10 @@ export default function StudentDashboard() {
       case 'home': return <HomeTab student={studentProfile} registrations={registrations} events={events} notifications={notifications} onViewDetails={setSelectedEvent} />;
       case 'passes': return <PassesTab registrations={registrations} onViewDetails={setSelectedEvent} events={events} />;
       case 'events': return renderMyEventsTab();
-      case 'discover': return <DiscoverTab events={events} registrations={registrations} onRegister={handleRegister} onViewDetails={setSelectedEvent} />;
+      case 'discover': return <DiscoverTab events={events} registrations={registrations} onRegister={handleRegister} onViewDetails={setSelectedEvent} onRefresh={fetchEvents} />;
       case 'certificates': return <CertificatesTab registrations={registrations} />;
       case 'sentinel': return <SentinelTab />;
-      case 'jobs': return <JobsTab jobs={jobs} onViewDetails={(job) => setSelectedJob(job)} />;
+      case 'jobs': return <JobsTab jobs={jobs} onViewDetails={(job) => setSelectedJob(job)} onRefresh={fetchJobs} />;
       case 'profile': return <ProfileTab student={studentProfile} onSave={handleSaveProfile} />;
       case 'notifications': return <NotificationsTab notifications={notifications} userId={currentUser?.uid} />;
       default: return <HomeTab student={studentProfile} registrations={registrations} events={events} notifications={notifications} onViewDetails={setSelectedEvent} />;
@@ -1074,8 +1084,17 @@ function MyEventsTab({ registrations, onUploadClick }: { registrations: any[], o
 }
 
 // --- DISCOVER TAB ---
-function DiscoverTab({ onRegister, registrations, events, onViewDetails }: { onRegister: (event: any) => void, registrations: any[], events: any[], onViewDetails?: (e: any) => void }) {
+function DiscoverTab({ onRegister, registrations, events, onViewDetails, onRefresh }: { onRegister: (event: any) => void, registrations: any[], events: any[], onViewDetails?: (e: any) => void, onRefresh?: () => void }) {
   const [filter, setFilter] = useState('All');
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const handleRefresh = async () => {
+    if (onRefresh) {
+      setIsRefreshing(true);
+      await onRefresh();
+      setTimeout(() => setIsRefreshing(false), 500);
+    }
+  };
 
   const filteredEvents = events.filter(event => {
     const isRegistered = registrations.some(r => r.eventId === event.id);
@@ -1086,6 +1105,16 @@ function DiscoverTab({ onRegister, registrations, events, onViewDetails }: { onR
   
   return (
     <div className="space-y-6">
+      <div className="flex justify-between items-center">
+        <h3 className="text-xl font-display font-bold">Discover Events</h3>
+        <button 
+          onClick={handleRefresh}
+          className={`p-2 text-gray-400 hover:text-red-primary transition-all ${isRefreshing ? 'animate-spin text-red-primary' : ''}`}
+          title="Refresh Events"
+        >
+          <RefreshCw size={18} />
+        </button>
+      </div>
       <div className="flex flex-wrap gap-2">
         {['All', 'Hackathon', 'Webinar', 'Workshop', 'Competition', 'Cultural'].map(f => (
           <button
@@ -1397,8 +1426,17 @@ function SentinelTab() {
 }
 
 // --- JOB BOARD TAB ---
-function JobsTab({ onViewDetails, jobs }: { onViewDetails: (job: any) => void, jobs: any[] }) {
+function JobsTab({ onViewDetails, jobs, onRefresh }: { onViewDetails: (job: any) => void, jobs: any[], onRefresh?: () => void }) {
   const [filter, setFilter] = useState('All');
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const handleRefresh = async () => {
+    if (onRefresh) {
+      setIsRefreshing(true);
+      await onRefresh();
+      setTimeout(() => setIsRefreshing(false), 500);
+    }
+  };
 
   const filteredJobs = jobs.filter(job => {
     if (filter === 'All') return true;
@@ -1407,6 +1445,16 @@ function JobsTab({ onViewDetails, jobs }: { onViewDetails: (job: any) => void, j
 
   return (
     <div className="space-y-6">
+      <div className="flex justify-between items-center">
+        <h3 className="text-xl font-display font-bold">Job Board</h3>
+        <button 
+          onClick={handleRefresh}
+          className={`p-2 text-gray-400 hover:text-red-primary transition-all ${isRefreshing ? 'animate-spin text-red-primary' : ''}`}
+          title="Refresh Jobs"
+        >
+          <RefreshCw size={18} />
+        </button>
+      </div>
       <div className="flex flex-wrap gap-2">
         {['All', 'Internship', 'Full-time', 'Research', 'Contract'].map(f => (
           <button 

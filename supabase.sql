@@ -82,7 +82,7 @@ CREATE TABLE IF NOT EXISTS events (
     slots JSONB DEFAULT '{"total": 100, "filled": 0}',
     target_audience TEXT DEFAULT 'All Students',
     volunteer_ids UUID[] DEFAULT '{}',
-    created_by UUID REFERENCES auth.users(id),
+    created_by UUID,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
     status TEXT DEFAULT 'Upcoming'
@@ -113,7 +113,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     target_year TEXT DEFAULT 'All',
     target_institution TEXT DEFAULT 'All',
     applications_count INTEGER DEFAULT 0,
-    created_by UUID REFERENCES auth.users(id),
+    created_by UUID,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -177,7 +177,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     description TEXT,
     status TEXT DEFAULT 'todo',
     assigned_to UUID REFERENCES auth.users(id),
-    created_by UUID REFERENCES auth.users(id),
+    created_by UUID,
     event_id UUID REFERENCES events(id) ON DELETE SET NULL,
     deadline TIMESTAMPTZ,
     priority TEXT DEFAULT 'Medium',
@@ -235,7 +235,7 @@ CREATE TABLE IF NOT EXISTS assignments (
 CREATE TABLE IF NOT EXISTS audit_logs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     action TEXT NOT NULL,
-    performed_by UUID REFERENCES auth.users(id),
+    performed_by UUID,
     target_user UUID REFERENCES auth.users(id),
     target_table TEXT,
     target_id UUID,
@@ -260,6 +260,43 @@ ALTER TABLE messages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE assignments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
 
+-- DROP ALL EXISTING POLICIES (idempotent cleanup)
+DROP POLICY IF EXISTS "Anyone can view assignments" ON assignments;
+DROP POLICY IF EXISTS "Coordinators can manage assignments" ON assignments;
+DROP POLICY IF EXISTS "Users can view their own profile" ON users;
+DROP POLICY IF EXISTS "Users can view all other users" ON users;
+DROP POLICY IF EXISTS "Users can update their own profile" ON users;
+DROP POLICY IF EXISTS "Anyone can create their profile" ON users;
+DROP POLICY IF EXISTS "Anyone can view events" ON events;
+DROP POLICY IF EXISTS "Creators can update their events" ON events;
+DROP POLICY IF EXISTS "Authenticated users can create events" ON events;
+DROP POLICY IF EXISTS "Users can create events" ON events;
+DROP POLICY IF EXISTS "Creators can delete their events" ON events;
+DROP POLICY IF EXISTS "Anyone can view jobs" ON jobs;
+DROP POLICY IF EXISTS "Creators can update their jobs" ON jobs;
+DROP POLICY IF EXISTS "Authenticated users can create jobs" ON jobs;
+DROP POLICY IF EXISTS "Creators can delete their jobs" ON jobs;
+DROP POLICY IF EXISTS "Users can view their own notifications" ON notifications;
+DROP POLICY IF EXISTS "Authenticated users can create notifications" ON notifications;
+DROP POLICY IF EXISTS "Users can mark their own notifications as read" ON notifications;
+DROP POLICY IF EXISTS "Users can view their own registrations" ON registrations;
+DROP POLICY IF EXISTS "Coordinators can view all registrations" ON registrations;
+DROP POLICY IF EXISTS "Users can create their own registration" ON registrations;
+DROP POLICY IF EXISTS "Coordinators can update registrations" ON registrations;
+DROP POLICY IF EXISTS "Users can view their own applications" ON applications;
+DROP POLICY IF EXISTS "Recruiters can view applications" ON applications;
+DROP POLICY IF EXISTS "Users can create their own application" ON applications;
+DROP POLICY IF EXISTS "Users can view tasks" ON tasks;
+DROP POLICY IF EXISTS "Users can create tasks" ON tasks;
+DROP POLICY IF EXISTS "Users can update tasks" ON tasks;
+DROP POLICY IF EXISTS "Users can view submissions" ON submissions;
+DROP POLICY IF EXISTS "Users can create submissions" ON submissions;
+DROP POLICY IF EXISTS "Evaluators can view/update scores" ON scores;
+DROP POLICY IF EXISTS "Users can view messages" ON messages;
+DROP POLICY IF EXISTS "Users can send messages" ON messages;
+DROP POLICY IF EXISTS "Super admins can view audit logs" ON audit_logs;
+DROP POLICY IF EXISTS "System can insert audit logs" ON audit_logs;
+
 -- ASSIGNMENTS POLICIES
 CREATE POLICY "Anyone can view assignments" ON assignments FOR SELECT USING (true);
 CREATE POLICY "Coordinators can manage assignments" ON assignments FOR ALL USING (true);
@@ -274,11 +311,13 @@ CREATE POLICY "Anyone can create their profile" ON users FOR INSERT WITH CHECK (
 CREATE POLICY "Anyone can view events" ON events FOR SELECT USING (true);
 CREATE POLICY "Creators can update their events" ON events FOR UPDATE USING (auth.uid() = created_by);
 CREATE POLICY "Authenticated users can create events" ON events FOR INSERT WITH CHECK (auth.uid() IS NOT NULL);
+CREATE POLICY "Creators can delete their events" ON events FOR DELETE USING (auth.uid() = created_by);
 
 -- JOBS POLICIES
 CREATE POLICY "Anyone can view jobs" ON jobs FOR SELECT USING (true);
 CREATE POLICY "Creators can update their jobs" ON jobs FOR UPDATE USING (auth.uid() = created_by);
 CREATE POLICY "Authenticated users can create jobs" ON jobs FOR INSERT WITH CHECK (auth.uid() IS NOT NULL);
+CREATE POLICY "Creators can delete their jobs" ON jobs FOR DELETE USING (auth.uid() = created_by);
 
 -- NOTIFICATIONS POLICIES
 CREATE POLICY "Users can view their own notifications" ON notifications FOR SELECT USING (user_id = 'all' OR user_id = auth.uid()::text);
@@ -381,9 +420,9 @@ RETURNS TEXT AS $$
   SELECT role FROM users WHERE uid = p_uid;
 $$ LANGUAGE SQL SECURITY DEFINER;
 
--- Function: Mark attendance (Fixed UUID/Text types)
+-- Function: Mark attendance (supports UUID id or 7-digit unique_id lookup)
 CREATE OR REPLACE FUNCTION public.mark_attendance(
-  p_registration_id UUID,
+  p_registration_id TEXT,
   p_scanner_id TEXT,
   p_scanner_name TEXT
 )
@@ -391,11 +430,39 @@ RETURNS JSONB AS $$
 DECLARE
   allowed BOOLEAN;
   reg_record registrations%ROWTYPE;
+  v_uuid UUID;
 BEGIN
   SELECT get_user_role(auth.uid()) IN ('coordinator', 'head_coordinator', 'volunteer', 'super_admin') INTO allowed;
   
   IF COALESCE(allowed, FALSE) = FALSE THEN
     RETURN jsonb_build_object('ok', FALSE, 'reason', 'unauthorized');
+  END IF;
+
+  -- Try UUID lookup first, then unique_id lookup
+  BEGIN
+    v_uuid := p_registration_id::UUID;
+    SELECT * INTO reg_record FROM registrations WHERE id = v_uuid;
+  EXCEPTION WHEN invalid_text_representation THEN
+    SELECT * INTO reg_record FROM registrations WHERE unique_id = p_registration_id;
+  END;
+
+  -- Fallback: also try unique_id if UUID lookup found nothing
+  IF reg_record IS NULL THEN
+    SELECT * INTO reg_record FROM registrations WHERE unique_id = p_registration_id;
+  END IF;
+
+  IF reg_record IS NULL THEN
+    RETURN jsonb_build_object('ok', FALSE, 'reason', 'not_found');
+  END IF;
+
+  IF reg_record.attended THEN
+    RETURN jsonb_build_object(
+      'ok', FALSE,
+      'reason', 'already_marked',
+      'student_name', reg_record.student_name,
+      'event_name', reg_record.event_name,
+      'attended_at', reg_record.attended_at
+    );
   END IF;
 
   UPDATE registrations SET 
@@ -405,32 +472,33 @@ BEGIN
     scanned_by = p_scanner_id, 
     scanned_by_name = p_scanner_name, 
     updated_at = NOW()
-  WHERE id = p_registration_id AND attended = FALSE
-  RETURNING * INTO reg_record;
+  WHERE id = reg_record.id;
 
-  IF FOUND THEN
-    RETURN jsonb_build_object(
-      'ok', TRUE, 
-      'reason', 'marked', 
-      'registration_id', reg_record.id,
-      'student_name', reg_record.student_name, 
-      'event_name', reg_record.event_name, 
-      'attended_at', reg_record.attended_at
-    );
-  END IF;
-
-  SELECT * INTO reg_record FROM registrations WHERE id = p_registration_id;
-  IF NOT FOUND THEN RETURN jsonb_build_object('ok', FALSE, 'reason', 'not_found'); END IF;
-  
   RETURN jsonb_build_object(
-    'ok', FALSE, 
-    'reason', 'already_marked', 
-    'student_name', reg_record.student_name,
+    'ok', TRUE, 
+    'reason', 'marked', 
+    'registration_id', reg_record.id,
+    'student_name', reg_record.student_name, 
     'event_name', reg_record.event_name, 
-    'attended_at', reg_record.attended_at
+    'attended_at', NOW()
   );
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Function: Auto-generate 7-digit numeric unique_id on registration
+CREATE OR REPLACE FUNCTION public.generate_unique_reg_id()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW.unique_id IS NULL OR NEW.unique_id = '' THEN
+    NEW.unique_id := LPAD(FLOOR(RANDOM() * 10000000)::TEXT, 7, '0');
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_generate_unique_reg_id ON registrations;
+CREATE TRIGGER trg_generate_unique_reg_id BEFORE INSERT ON registrations
+FOR EACH ROW EXECUTE FUNCTION public.generate_unique_reg_id();
 
 -- Trigger: Auto notify on event created
 CREATE OR REPLACE FUNCTION public.notify_event_created()
@@ -442,8 +510,9 @@ BEGIN
   );
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
+DROP TRIGGER IF EXISTS trg_notify_event_created ON events;
 CREATE TRIGGER trg_notify_event_created AFTER INSERT ON events
 FOR EACH ROW EXECUTE FUNCTION public.notify_event_created();
 
