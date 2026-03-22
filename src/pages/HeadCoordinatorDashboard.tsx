@@ -5,7 +5,7 @@ import {
   Megaphone, BarChart3, User, Clock, CheckCircle2, MoreVertical,
   Download, Search, Filter, Mail, Trash2, Edit, ExternalLink,
   MapPin, Globe, Users2, UserPlus, Award, FileText, Check, Plus, Eye, QrCode, Briefcase, X, XCircle,
-  TrendingUp, ArrowUpRight, ScrollText, CheckSquare, AlertCircle, Camera
+  TrendingUp, ArrowUpRight, ScrollText, CheckSquare, AlertCircle, Camera, Upload
 } from 'lucide-react';
 import { Bar, Line, Pie, Doughnut } from 'react-chartjs-2';
 import { 
@@ -164,8 +164,8 @@ export default function HeadCoordinatorDashboard() {
         ? new Date(eventDate).toISOString()
         : new Date().toISOString();
       
-      const { bannerUrl, targetAudience, coordinatorEmail, registrationType, maxTeamSize } = eventData;
-      const { error } = await supabase.from('events').insert({
+      const { bannerUrl, targetAudience, coordinatorEmail, coordinatorId, coordinatorName, registrationType, maxTeamSize, website } = eventData;
+      const { data: newEventData, error } = await supabase.from('events').insert({
         name: eventData.name,
         title: eventData.name,
         category: eventData.category || 'Hackathon',
@@ -175,6 +175,9 @@ export default function HeadCoordinatorDashboard() {
         date: formattedDate,
         banner_url: bannerUrl || '',
         coordinator_email: coordinatorEmail || '',
+        coordinator_id: coordinatorId || null,
+        coordinator_name: coordinatorName || '',
+        website: website || '',
         registration_type: registrationType || 'single',
         max_team_size: parseInt(maxTeamSize) || 1,
         target_audience: targetAudience || 'All Students',
@@ -182,7 +185,26 @@ export default function HeadCoordinatorDashboard() {
         created_at: new Date().toISOString(),
         status: 'Upcoming',
         slots: { filled: 0, total: parseInt(eventData.capacity) || 100 }
-      });
+      }).select().single();
+
+      if (error) {
+        setNotification({ message: `Event creation failed: ${error.message}`, type: 'error' });
+        setTimeout(() => setNotification(null), 3500);
+        return false;
+      }
+
+      // Send notification to the assigned coordinator
+      if (coordinatorId) {
+        await supabase.from('notifications').insert({
+          user_id: coordinatorId,
+          title: 'New Event Assigned',
+          message: `You have been assigned as the coordinator for the event: ${eventData.name}`,
+          type: 'assignment',
+          priority: 'High',
+          read: false,
+          created_at: new Date().toISOString()
+        });
+      }
 
       if (error) {
         setNotification({ message: `Event creation failed: ${error.message}`, type: 'error' });
@@ -201,6 +223,21 @@ export default function HeadCoordinatorDashboard() {
       return false;
     } finally {
       setIsPublishing(false);
+    }
+  };
+
+  const handleDeleteEvent = async (eventId: string) => {
+    try {
+      const { error } = await supabase.from('events').delete().eq('id', eventId);
+      if (error) {
+        setNotification({ message: `Event deletion failed: ${error.message}`, type: 'error' });
+        setTimeout(() => setNotification(null), 3500);
+        return;
+      }
+      setNotification({ message: 'Event deleted successfully!', type: 'success' });
+      setTimeout(() => setNotification(null), 3000);
+    } catch (error) {
+      setNotification({ message: 'Event deletion failed. Please try again.', type: 'error' });
     }
   };
 
@@ -236,6 +273,21 @@ export default function HeadCoordinatorDashboard() {
     }
   };
 
+  const handleRemoveStaff = async (assignmentId: string) => {
+    try {
+      const { error } = await supabase.from('assignments').delete().eq('id', assignmentId);
+      if (error) {
+        setNotification({ message: `Failed to remove: ${error.message}`, type: 'error' });
+        setTimeout(() => setNotification(null), 3500);
+        return;
+      }
+      setNotification({ message: 'Member removed from assignment.', type: 'success' });
+      setTimeout(() => setNotification(null), 3000);
+    } catch (error) {
+      setNotification({ message: 'Failed to remove staff member.', type: 'error' });
+    }
+  };
+
   const handleSendAnnouncement = async (data: any) => {
     try {
       const { error } = await supabase.from('notifications').insert({
@@ -264,8 +316,8 @@ export default function HeadCoordinatorDashboard() {
   const renderTabContent = () => {
     switch (activeTab) {
       case 'overview': return <OverviewTab setActiveTab={setActiveTab} events={events} jobs={jobs} />;
-      case 'my-events': return <MyEventsTab events={events} setNotification={setNotification} assignments={assignments} users={availableUsers} />;
-      case 'create-event': return <CreateEventTab onPost={handleCreateEvent} isPublishing={isPublishing} setNotification={setNotification} currentUser={currentUser} />;
+      case 'my-events': return <MyEventsTab events={events} setNotification={setNotification} onDeleteEvent={handleDeleteEvent} onRemoveStaff={handleRemoveStaff} setConfirmModal={setConfirmModal} assignments={assignments} users={availableUsers} />;
+      case 'create-event': return <CreateEventTab onPost={handleCreateEvent} isPublishing={isPublishing} setNotification={setNotification} currentUser={currentUser} availableUsers={availableUsers} />;
       case 'my-team': return <MyTeamTab events={events} users={availableUsers} assignments={assignments} setNotification={setNotification} setConfirmModal={setConfirmModal} />;
       case 'assign-evaluator': return <MyTeamTab initialSection="evaluator" events={events} users={availableUsers} assignments={assignments} setNotification={setNotification} setConfirmModal={setConfirmModal} />;
       case 'assign-coordinator': return <MyTeamTab initialSection="coordinator" events={events} users={availableUsers} assignments={assignments} setNotification={setNotification} setConfirmModal={setConfirmModal} />;
@@ -465,11 +517,14 @@ function StatCard({ label, value, icon, isUrgent }: any) {
 }
 
 // --- MY EVENTS TAB ---
-function MyEventsTab({ events, setNotification, assignments = [], users = [] }: { 
+function MyEventsTab({ events, setNotification, assignments = [], users = [], onDeleteEvent, onRemoveStaff, setConfirmModal }: { 
   events: any[], 
   setNotification: (n: any) => void,
   assignments?: any[],
-  users?: any[]
+  users?: any[],
+  onDeleteEvent?: (eventId: string) => void,
+  onRemoveStaff?: (assignmentId: string) => void,
+  setConfirmModal?: (m: any) => void
 }) {
   const [selectedEvent, setSelectedEvent] = useState<any>(null);
   const [activeSubTab, setActiveSubTab] = useState<'overview' | 'registrations' | 'staff'>('overview');
@@ -586,6 +641,22 @@ function MyEventsTab({ events, setNotification, assignments = [], users = [] }: 
                           <p className="text-[10px] text-gray-400 uppercase font-bold">{a.role}</p>
                         </div>
                         <div className={`w-2 h-2 rounded-full ${a.status === 'assigned' ? 'bg-blue-400' : 'bg-green-400'}`} title={a.status} />
+                        <button 
+                          onClick={() => {
+                            if (setConfirmModal && onRemoveStaff) {
+                              setConfirmModal({
+                                isOpen: true,
+                                title: 'Remove Staff',
+                                message: `Are you sure you want to remove ${user?.name || 'this member'} from this event?`,
+                                onConfirm: () => onRemoveStaff(a.id)
+                              });
+                            }
+                          }}
+                          className="p-1.5 text-gray-300 hover:text-red-primary hover:bg-red-50 rounded-lg transition-all"
+                          title="Remove from event"
+                        >
+                          <Trash2 size={14} />
+                        </button>
                       </div>
                     );
                   })}
@@ -622,12 +693,44 @@ function MyEventsTab({ events, setNotification, assignments = [], users = [] }: 
               {selectedEvent.status !== 'Completed' && (
                 <button 
                   onClick={async () => {
+                    // 1. Update event status to 'Completed'
                     const { error } = await supabase.from('events').update({ status: 'Completed', updated_at: new Date().toISOString() }).eq('id', selectedEvent.id);
                     if (error) {
-                      setNotification({ message: `Error: ${error.message}`, type: 'error' });
+                      setNotification({ message: `Error updating event: ${error.message}`, type: 'error' });
                       return;
                     }
-                    setNotification({ message: `${selectedEvent.name} marked as completed.`, type: 'success' });
+
+                    // 2. Automatically issue certificates to all attended students
+                    try {
+                      const { data: eventData } = await supabase.from('events').select('certificate_template, certificate_coords').eq('id', selectedEvent.id).single();
+                      
+                      const updateData: any = { 
+                        certificate_issued: true, 
+                        issued_at: new Date().toISOString() 
+                      };
+
+                      if (eventData?.certificate_template) {
+                        updateData.certificate_url = eventData.certificate_template;
+                        updateData.certificate_name_x = eventData.certificate_coords?.x || 50;
+                        updateData.certificate_name_y = eventData.certificate_coords?.y || 45;
+                      }
+
+                      console.log("Auto-issuing certificates for event:", selectedEvent.id, "with template data:", updateData);
+                      
+                      const { error: regError } = await supabase.from('registrations')
+                        .update(updateData)
+                        .eq('event_id', selectedEvent.id)
+                        .eq('status', 'attended');
+                      
+                      if (regError) {
+                        setNotification({ message: `Event completed, but certificate issuance failed: ${regError.message}`, type: 'error' });
+                      } else {
+                        setNotification({ message: `${selectedEvent.name} marked as completed and certificates issued to participants.`, type: 'success' });
+                      }
+                    } catch (err: any) {
+                      setNotification({ message: `Event completed, but certificate issuance failed: ${err.message}`, type: 'error' });
+                    }
+                    
                     setSelectedEvent(null);
                   }}
                   className="w-full bg-green-600 text-white font-bold py-2 rounded-lg text-xs hover:bg-green-700 transition-all"
@@ -635,6 +738,25 @@ function MyEventsTab({ events, setNotification, assignments = [], users = [] }: 
                   Mark Event Complete
                 </button>
               )}
+              
+              <button 
+                onClick={() => {
+                  if (setConfirmModal && onDeleteEvent) {
+                    setConfirmModal({
+                      isOpen: true,
+                      title: 'Delete Event',
+                      message: `Are you sure you want to permanently delete "${selectedEvent.name}"? This action cannot be undone and will remove all registrations.`,
+                      onConfirm: () => {
+                        onDeleteEvent(selectedEvent.id);
+                        setSelectedEvent(null);
+                      }
+                    });
+                  }
+                }}
+                className="w-full bg-red-50 text-red-600 font-bold py-2 rounded-lg text-xs hover:bg-red-100 transition-all border border-red-100 flex items-center justify-center gap-2 mt-2"
+              >
+                <Trash2 size={14} /> Delete Event
+              </button>
             </div>
           </motion.aside>
         )}
@@ -644,11 +766,12 @@ function MyEventsTab({ events, setNotification, assignments = [], users = [] }: 
 }
 
 // --- CREATE EVENT TAB ---
-function CreateEventTab({ onPost, isPublishing, setNotification, currentUser }: { 
+function CreateEventTab({ onPost, isPublishing, setNotification, currentUser, availableUsers = [] }: { 
   onPost: (data: any) => Promise<boolean>, 
   isPublishing?: boolean,
   setNotification: (n: any) => void,
-  currentUser: any
+  currentUser: any,
+  availableUsers?: any[]
 }) {
   const [step, setStep] = useState(1);
   const [newEvent, setNewEvent] = useState({
@@ -664,6 +787,8 @@ function CreateEventTab({ onPost, isPublishing, setNotification, currentUser }: 
     website: '',
     location: '',
     coordinatorEmail: '',
+    coordinatorId: '',
+    coordinatorName: '',
     registrationType: 'single',
     maxTeamSize: 1
   });
@@ -672,6 +797,10 @@ function CreateEventTab({ onPost, isPublishing, setNotification, currentUser }: 
 
   const handleBannerUpload = async (file: File) => {
     try {
+      if (file.size > 2 * 1024 * 1024) {
+        setNotification({ message: 'Banner size should be less than 2MB', type: 'error' });
+        return;
+      }
       if (currentUser?.isDemo) {
         // For demo users, use a local data URL as they don't have a real Supabase session for storage
         const reader = new FileReader();
@@ -771,14 +900,29 @@ function CreateEventTab({ onPost, isPublishing, setNotification, currentUser }: 
                 />
               </div>
               <div className="md:col-span-2">
-                <label className="text-[10px] font-bold text-gray-400 uppercase block mb-2">Assign Coordinator Email</label>
-                <input 
-                  type="email" 
-                  className="w-full bg-gray-50 border border-gray-200 rounded-lg p-3 text-sm outline-none focus:border-red-primary mb-4" 
-                  placeholder="coordinator@uniguild.com"
-                  value={newEvent.coordinatorEmail}
-                  onChange={e => setNewEvent({...newEvent, coordinatorEmail: e.target.value})}
-                />
+                <label className="text-[10px] font-bold text-gray-400 uppercase block mb-2">Assign Coordinator</label>
+                <select 
+                  className="w-full bg-gray-50 border border-gray-200 rounded-lg p-3 text-sm outline-none focus:border-red-primary mb-4"
+                  value={newEvent.coordinatorId}
+                  onChange={e => {
+                    const selectedId = e.target.value;
+                    const selectedUser = availableUsers.find(u => u.uid === selectedId);
+                    setNewEvent({
+                      ...newEvent, 
+                      coordinatorId: selectedId,
+                      coordinatorName: selectedUser?.name || '',
+                      coordinatorEmail: selectedUser?.email || ''
+                    });
+                  }}
+                >
+                  <option value="">Select a Coordinator</option>
+                  {availableUsers
+                    .filter(u => u.role === 'coordinator' || u.role === 'event_coordinator')
+                    .map(u => (
+                      <option key={u.uid} value={u.uid}>{u.name} ({u.email})</option>
+                    ))
+                  }
+                </select>
               </div>
               <div className="md:col-span-2">
                 <label className="text-[10px] font-bold text-gray-400 uppercase block mb-2">Registration Type</label>
@@ -1952,8 +2096,10 @@ function JobsTab({ jobs, onPost, isPosting, setNotification }: {
     targetSection: '',
     targetBranch: '',
     targetYear: '',
-    targetPersona: ''
+    targetPersona: '',
+    logo: ''
   });
+  const logoInputRef = useRef<HTMLInputElement>(null);
 
   const handlePost = async () => {
     if (!newJob.title || !newJob.company) {
@@ -2046,6 +2192,15 @@ function JobsTab({ jobs, onPost, isPosting, setNotification }: {
                 <button className="btn-primary flex-1 py-3 text-sm font-bold shadow-md hover:shadow-lg transition-all">
                   View Applications
                 </button>
+                {job.appLink && (
+                  <button 
+                    onClick={() => window.open(job.appLink, '_blank')}
+                    className="py-3 px-4 rounded-xl border border-gray-200 text-gray-400 hover:text-red-primary hover:border-red-primary/30 transition-all hover:bg-red-50"
+                    title="View Original Posting"
+                  >
+                    <ExternalLink size={16} />
+                  </button>
+                )}
                 <button className="btn-secondary px-6 py-3 text-sm font-bold flex items-center gap-2">
                   <Edit size={16} /> Edit
                 </button>
@@ -2145,14 +2300,48 @@ function JobsTab({ jobs, onPost, isPosting, setNotification }: {
                     />
                   </div>
                   <div className="md:col-span-2">
-                    <label className="text-[10px] font-bold text-gray-400 uppercase block mb-2 tracking-widest">Company Website (Optional)</label>
-                    <input 
-                      type="url" 
-                      className="w-full bg-gray-50 border border-gray-200 rounded-xl p-4 text-sm outline-none focus:border-red-primary focus:ring-4 focus:ring-red-primary/5 transition-all" 
-                      placeholder="https://company.com"
-                      value={newJob.website}
-                      onChange={e => setNewJob({...newJob, website: e.target.value})}
-                    />
+                    <label className="text-[10px] font-bold text-gray-400 uppercase block mb-2 tracking-widest">Company Logo</label>
+                    <div className="flex flex-col sm:flex-row gap-4">
+                      {newJob.logo && (
+                        <div className="w-16 h-16 bg-white border border-gray-100 rounded-xl flex items-center justify-center p-2 shadow-sm">
+                          <img src={newJob.logo} alt="Logo Preview" className="w-full h-full object-contain" />
+                        </div>
+                      )}
+                      <div className="flex-1 flex gap-2">
+                        <input 
+                          type="text" 
+                          className="flex-1 bg-gray-50 border border-gray-200 rounded-xl p-4 text-sm outline-none focus:border-red-primary focus:ring-4 focus:ring-red-primary/5 transition-all" 
+                          placeholder="Paste URL or upload image..."
+                          value={newJob.logo}
+                          onChange={e => setNewJob({...newJob, logo: e.target.value})}
+                        />
+                        <input 
+                          type="file" 
+                          ref={logoInputRef}
+                          className="hidden" 
+                          accept="image/*"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              if (file.size > 1024 * 1024) {
+                                setNotification({ message: "Logo size should be less than 1MB", type: 'error' });
+                                return;
+                              }
+                              const reader = new FileReader();
+                              reader.onloadend = () => setNewJob({...newJob, logo: reader.result as string});
+                              reader.readAsDataURL(file);
+                            }
+                          }}
+                        />
+                        <button 
+                          type="button"
+                          onClick={() => logoInputRef.current?.click()}
+                          className="px-6 bg-gray-100 text-gray-700 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-gray-200 transition-all border border-gray-200"
+                        >
+                          <Upload size={18} /> Upload
+                        </button>
+                      </div>
+                    </div>
                   </div>
                   <div className="md:col-span-2">
                     <label className="text-[10px] font-bold text-gray-400 uppercase block mb-2 tracking-widest">Official Application Link</label>
@@ -2383,12 +2572,42 @@ function CertificatesTab({ events = [], registrations = [], setNotification, set
   const [namePosition, setNamePosition] = useState({ x: 50, y: 50 }); // Percentage
   const [isIssuing, setIsIssuing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedEventId, setSelectedEventId] = useState<string>('all_completed');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (selectedEventId === 'all_completed') {
+      setTemplate(null);
+      setTemplatePreview(null);
+      setNamePosition({ x: 50, y: 50 });
+      return;
+    }
+
+    const fetchDefaultTemplate = async () => {
+      const { data, error } = await supabase.from('events').select('certificate_template, certificate_coords').eq('id', selectedEventId).single();
+      if (data?.certificate_template) {
+        setTemplatePreview(data.certificate_template);
+        setTemplate('Event Default Template');
+        if (data.certificate_coords) {
+          setNamePosition(data.certificate_coords);
+        }
+      } else {
+        setTemplate(null);
+        setTemplatePreview(null);
+        setNamePosition({ x: 50, y: 50 });
+      }
+    };
+    fetchDefaultTemplate();
+  }, [selectedEventId]);
 
   const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      if (file.size > 2 * 1024 * 1024) {
+        setNotification({ message: 'Certificate template must be under 2MB.', type: 'error' });
+        return;
+      }
       const reader = new FileReader();
       reader.onloadend = () => {
         setTemplatePreview(reader.result as string);
@@ -2406,23 +2625,37 @@ function CertificatesTab({ events = [], registrations = [], setNotification, set
     setNamePosition({ x, y });
   };
 
-  const eligibleRegistrations = registrations.filter(r => 
-    (r.student_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-     r.student_id?.toLowerCase().includes(searchQuery.toLowerCase())) &&
-    r.attendance_status === 'Present'
-  );
+  const eligibleRegistrations = registrations.filter(r => {
+    const matchesSearch = (r.student_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                           r.student_id?.toLowerCase().includes(searchQuery.toLowerCase()));
+    
+    const isPresent = r.attendance_status === 'Present' || r.attended === true;
+
+    if (selectedEventId === 'all_completed') {
+      const event = events.find(e => e.id === r.event_id);
+      return matchesSearch && isPresent && event?.status === 'Completed';
+    } else {
+      return matchesSearch && isPresent && r.event_id === selectedEventId;
+    }
+  });
 
   const handleIssueCertificate = async (participantId: string) => {
-    if (!template) {
+    if (!templatePreview) {
       setNotification({ message: "Please upload a certificate template first.", type: 'error' });
       return;
     }
 
     setIsIssuing(true);
     try {
-      const { error } = await supabase.from('registrations').update({
+      const payload = {
         certificate_issued: true,
-      }).eq('id', participantId);
+        certificate_url: templatePreview,
+        certificate_name_x: namePosition.x,
+        certificate_name_y: namePosition.y,
+        issued_at: new Date().toISOString()
+      };
+      console.log("Issuing certificate with payload:", payload);
+      const { error } = await supabase.from('registrations').update(payload).eq('id', participantId);
       if (error) throw error;
       setNotification({ message: 'Certificate issued successfully!', type: 'success' });
     } catch (error: any) {
@@ -2433,30 +2666,34 @@ function CertificatesTab({ events = [], registrations = [], setNotification, set
   };
 
   const handleIssueAll = async () => {
-    if (!template) {
+    if (!templatePreview) {
       setNotification({ message: "Please upload a certificate template first.", type: 'error' });
       return;
     }
 
-    const pending = eligibleRegistrations.filter(r => !r.certificate_issued);
+    const pending = eligibleRegistrations.filter(r => !r.certificate_issued || !r.certificate_url || r.certificate_url.length < 50);
     if (pending.length === 0) {
-      setNotification({ message: "No pending certificates to issue for present students.", type: 'error' });
+      setNotification({ message: "No pending certificates to issue for the current selection.", type: 'error' });
       return;
     }
 
     setConfirmModal({
       isOpen: true,
       title: 'Issue Certificates',
-      message: `Are you sure you want to issue certificates to all ${pending.length} pending participants?`,
+      message: `Are you sure you want to issue certificates to all ${pending.length} pending participants in the current view?`,
       onConfirm: async () => {
         setIsIssuing(true);
         try {
-          for (const p of pending) {
-            const { error } = await supabase.from('registrations').update({
-              certificate_issued: true,
-            }).eq('id', p.id);
-            if (error) throw error;
-          }
+          const ids = pending.map(p => p.id);
+          const { error } = await supabase.from('registrations').update({
+            certificate_issued: true,
+            certificate_url: templatePreview,
+            certificate_name_x: namePosition.x,
+            certificate_name_y: namePosition.y,
+            issued_at: new Date().toISOString()
+          }).in('id', ids);
+
+          if (error) throw error;
           setNotification({ message: `Successfully issued ${pending.length} certificates!`, type: 'success' });
         } catch (error: any) {
           setNotification({ message: `Failed to issue certificates: ${error.message}`, type: 'error' });
@@ -2474,14 +2711,49 @@ function CertificatesTab({ events = [], registrations = [], setNotification, set
           <h2 className="text-2xl font-display font-bold text-red-primary">Issue Certificates</h2>
           <p className="text-sm text-gray-500 font-medium">Generate and send certificates to verified participants.</p>
         </div>
-        <div className="flex gap-3">
-          <button 
-            onClick={handleIssueAll}
-            disabled={isIssuing || !template}
-            className="btn-primary flex items-center gap-2 disabled:opacity-50"
-          >
-            <Award size={16} /> Issue All
-          </button>
+        <div className="flex flex-wrap gap-3">
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest px-1">Filter by Event</label>
+            <select 
+              value={selectedEventId}
+              onChange={(e) => setSelectedEventId(e.target.value)}
+              className="bg-white border border-gray-200 rounded-xl px-4 py-2 text-xs font-bold outline-none focus:border-red-primary focus:ring-4 focus:ring-red-primary/5 transition-all min-w-[200px]"
+            >
+              <option value="all_completed">All Completed Events</option>
+              {events.filter(e => e.status === 'Completed').map(e => (
+                <option key={e.id} value={e.id}>{e.name}</option>
+              ))}
+            </select>
+          </div>
+          <div className="flex gap-2 items-end">
+            <button 
+              onClick={handleIssueAll}
+              disabled={isIssuing || !templatePreview}
+              className="btn-primary flex items-center gap-2 disabled:opacity-50 py-2.5"
+            >
+              <Award size={16} /> Issue All
+            </button>
+            {selectedEventId !== 'all_completed' && templatePreview && (
+              <button 
+                onClick={async () => {
+                  try {
+                    const { error } = await supabase.from('events').update({
+                      certificate_template: templatePreview,
+                      certificate_coords: { x: namePosition.x, y: namePosition.y }
+                    }).eq('id', selectedEventId);
+                    if (error) throw error;
+                    setNotification({ message: 'Template saved as event default!', type: 'success' });
+                  } catch (err: any) {
+                    setNotification({ message: `Failed to save template: ${err.message}`, type: 'error' });
+                  }
+                }}
+                className="btn-secondary py-2.5 text-xs flex items-center gap-2"
+                title="Save this template and name position as the default for this specific event"
+              >
+                Save as Default
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -2583,15 +2855,15 @@ function CertificatesTab({ events = [], registrations = [], setNotification, set
                           <p className="text-[10px] text-gray-500">{reg.student_id}</p>
                         </td>
                         <td className="px-6 py-4 text-right">
-                          {reg.certificate_issued ? (
+                          {reg.certificate_issued && reg.certificate_url && reg.certificate_url.length > 50 ? (
                             <span className="text-green-600 text-[10px] font-bold uppercase bg-green-50 px-2 py-1 rounded">Issued</span>
                           ) : (
                             <button 
                               onClick={() => handleIssueCertificate(reg.id)}
-                              disabled={isIssuing || !template}
+                              disabled={isIssuing || !templatePreview}
                               className="btn-primary py-1.5 px-3 text-[10px] disabled:opacity-50"
                             >
-                              Issue
+                              {isIssuing ? '...' : (reg.certificate_issued ? 'Re-issue' : 'Issue')}
                             </button>
                           )}
                         </td>

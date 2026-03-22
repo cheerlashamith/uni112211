@@ -71,6 +71,9 @@ export default function StudentDashboard() {
         registeredAt: r.registered_at,
         certificateIssued: r.certificate_issued,
         certificateUrl: r.certificate_url,
+        certificateNameX: r.certificate_name_x,
+        certificateNameY: r.certificate_name_y,
+        issuedAt: r.issued_at,
         date: r.date,
         host: r.host,
         category: r.category,
@@ -386,7 +389,7 @@ export default function StudentDashboard() {
       case 'passes': return <PassesTab registrations={registrations} onViewDetails={setSelectedEvent} events={events} />;
       case 'events': return renderMyEventsTab();
       case 'discover': return <DiscoverTab events={events} registrations={registrations} onRegister={handleRegister} onViewDetails={setSelectedEvent} onRefresh={fetchEvents} />;
-      case 'certificates': return <CertificatesTab registrations={registrations} />;
+      case 'certificates': return <CertificatesTab registrations={registrations} setNotification={setNotification} />;
       case 'sentinel': return <SentinelTab />;
       case 'jobs': return <JobsTab jobs={jobs} onViewDetails={(job) => setSelectedJob(job)} onRefresh={fetchJobs} />;
       case 'profile': return <ProfileTab student={studentProfile} onSave={handleSaveProfile} />;
@@ -582,8 +585,8 @@ export default function StudentDashboard() {
                     <p className="text-sm font-bold">{selectedEvent.host || selectedEvent.created_by || 'University'}</p>
                   </div>
                   <div className="bg-gray-50 p-4 rounded-xl">
-                    <p className="text-[10px] text-gray-400 font-bold uppercase mb-1">Audience</p>
-                    <p className="text-sm font-bold">{selectedEvent.targetAudience || 'All Students'}</p>
+                    <p className="text-[10px] text-gray-400 font-bold uppercase mb-1">Coordinator</p>
+                    <p className="text-sm font-bold flex items-center gap-2"><User size={14} className="text-red-primary" /> {selectedEvent.coordinator_name || 'TBA'}</p>
                   </div>
                 </div>
 
@@ -2007,39 +2010,171 @@ function ProfileTab({ student, onSave }: { student: any, onSave: (updated: any) 
 }
 
 // --- CERTIFICATES TAB ---
-function CertificatesTab({ registrations }: { registrations: any[] }) {
+function CertificatesTab({ registrations, setNotification }: { registrations: any[], setNotification: (n: any) => void }) {
   const certificates = registrations.filter(r => r.certificateIssued);
+
+  const generateCertificateBlob = async (cert: any): Promise<Blob | null> => {
+    if (!cert.certificateUrl || cert.certificateUrl.length < 50) {
+      console.error("Invalid or missing certificate data:", cert);
+      return null;
+    }
+    
+    return new Promise((resolve) => {
+      const img = new Image();
+      // Only set crossOrigin if it's not a data URL
+      if (!cert.certificateUrl.startsWith('data:')) {
+        img.crossOrigin = "anonymous";
+      }
+      
+      img.onload = () => {
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = img.naturalWidth || 1000;
+          canvas.height = img.naturalHeight || 700;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) { 
+            console.error("Failed to get canvas context");
+            resolve(null); 
+            return; 
+          }
+
+          ctx.drawImage(img, 0, 0);
+
+          const xPos = (cert.certificateNameX ?? 50) / 100 * canvas.width;
+          const yPos = (cert.certificateNameY ?? 45) / 100 * canvas.height;
+          
+          const fontSize = Math.max(12, Math.floor(canvas.width * 0.04));
+          ctx.font = `bold ${fontSize}px sans-serif`;
+          ctx.fillStyle = "#111827";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(cert.studentName || 'Student', xPos, yPos);
+
+          canvas.toBlob((blob) => {
+            if (!blob) {
+              console.error("canvas.toBlob returned null");
+              resolve(null);
+            } else {
+              resolve(blob);
+            }
+          }, 'image/png');
+        } catch (err) {
+          console.error("Canvas rendering error:", err);
+          resolve(null);
+        }
+      };
+      img.onerror = (e) => {
+        console.error("Image load error for URL:", cert.certificateUrl.substring(0, 50) + "...", e);
+        resolve(null);
+      };
+      img.src = cert.certificateUrl;
+    });
+  };
+
+  const handleDownload = async (cert: any) => {
+    try {
+      const blob = await generateCertificateBlob(cert);
+      if (!blob) {
+        setNotification({ 
+          message: `Failed to generate certificate (ID: ${cert.id.substring(0, 8)}). The certificate data might be invalid or outdated. Please contact the event coordinator.`, 
+          type: 'error' 
+        });
+        return;
+      }
+      
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `Certificate_${cert.eventName?.replace(/\s+/g, '_') || 'Event'}.png`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      
+      setNotification({ message: 'Certificate downloaded successfully!', type: 'success' });
+    } catch (error) {
+      setNotification({ message: 'Failed to download certificate. Please try again.', type: 'error' });
+    }
+  };
+
+  const handleShare = async (cert: any) => {
+    try {
+      const blob = await generateCertificateBlob(cert);
+      if (!blob) throw new Error("Failed to generate certificate image");
+      
+      const file = new File([blob], `Certificate_${cert.eventName?.replace(/\s+/g, '_') || 'Event'}.png`, { type: 'image/png' });
+      
+      if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({
+          files: [file],
+          title: 'UniGuild Certificate',
+          text: `Check out my certificate for ${cert.eventName}!`
+        });
+      } else {
+        // Fallback: Copy dummy link or just notify
+        await navigator.clipboard.writeText(`UniGuild Certificate for ${cert.eventName}`);
+        setNotification({ message: 'Share link copied to clipboard (Sharing not supported on this browser)', type: 'success' });
+      }
+    } catch (error) {
+      if ((error as any).name !== 'AbortError') {
+        setNotification({ message: 'Failed to share certificate.', type: 'error' });
+      }
+    }
+  };
   
   return (
     <div className="space-y-6">
       <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
         {certificates.length > 0 ? certificates.map(cert => (
-          <div key={cert.id} className="card overflow-hidden group">
-            <div className="aspect-[1.4/1] bg-gray-100 relative overflow-hidden flex items-center justify-center p-4">
-              <div className="w-full h-full border-4 border-red-primary/20 rounded-lg flex flex-col items-center justify-center text-center p-4 bg-white shadow-inner">
-                <Award size={32} className="text-red-primary mb-2" />
-                <h4 className="text-xs font-display font-bold text-red-primary uppercase tracking-widest">Certificate of Participation</h4>
-                <div className="w-12 h-0.5 bg-red-primary my-2" />
-                <p className="text-[8px] text-gray-400 uppercase font-bold mb-1">Awarded to</p>
-                <p className="text-sm font-display font-bold text-gray-900">{cert.studentName}</p>
-                <p className="text-[8px] text-gray-400 uppercase font-bold mt-2">For participating in</p>
-                <p className="text-[10px] font-bold text-gray-700">{cert.eventName}</p>
-              </div>
-              <div className="absolute inset-0 bg-red-primary/0 group-hover:bg-red-primary/10 transition-colors" />
+          <div key={cert.id} className="card overflow-hidden group hover:border-red-primary transition-all">
+            <div className="aspect-[1.4/1] bg-gray-50 relative overflow-hidden flex items-center justify-center">
+              {cert.certificateUrl ? (
+                <div className="relative w-full h-full flex items-center justify-center overflow-hidden bg-white">
+                  <img 
+                    src={cert.certificateUrl} 
+                    className="w-full h-full object-contain" 
+                    alt="Certificate" 
+                  />
+                  <div 
+                    className="absolute pointer-events-none whitespace-nowrap"
+                    style={{
+                      left: `${cert.certificateNameX ?? 50}%`,
+                      top: `${cert.certificateNameY ?? 45}%`,
+                      transform: 'translate(-50%, -50%)'
+                    }}
+                  >
+                    <p className="text-[12px] md:text-lg font-display font-bold text-gray-900 drop-shadow-sm">
+                      {cert.studentName}
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="w-full h-full border-4 border-red-primary/20 rounded-lg flex flex-col items-center justify-center text-center p-4 bg-white shadow-inner m-4">
+                  <Award size={32} className="text-red-primary mb-2" />
+                  <h4 className="text-xs font-display font-bold text-red-primary uppercase tracking-widest">Certificate of Participation</h4>
+                  <div className="w-12 h-0.5 bg-red-primary my-2" />
+                  <p className="text-[8px] text-gray-400 uppercase font-bold mb-1">Awarded to</p>
+                  <p className="text-sm font-display font-bold text-gray-900">{cert.studentName}</p>
+                  <p className="text-[8px] text-gray-400 uppercase font-bold mt-2">For participating in</p>
+                  <p className="text-[10px] font-bold text-gray-700">{cert.eventName}</p>
+                </div>
+              )}
+              <div className="absolute inset-0 bg-red-primary/0 group-hover:bg-red-primary/5 transition-colors pointer-events-none" />
             </div>
             <div className="p-4">
               <h3 className="font-bold text-sm mb-1">{cert.eventName}</h3>
               <p className="text-[10px] text-gray-500 mb-4">Issued on {cert.issuedAt ? new Date(cert.issuedAt).toLocaleDateString() : 'Recently'}</p>
               <div className="flex gap-2">
-                <a 
-                  href={cert.certificateUrl} 
-                  target="_blank" 
-                  rel="noopener noreferrer"
+                <button 
+                  onClick={() => handleDownload(cert)}
                   className="btn-primary flex-1 py-2 text-xs flex items-center justify-center gap-2"
                 >
                   <Download size={14} /> Download
-                </a>
-                <button onClick={() => navigator.clipboard?.writeText(cert.certificateUrl || '')} className="btn-secondary py-2 px-3 text-xs">
+                </button>
+                <button 
+                  onClick={() => handleShare(cert)} 
+                  className="btn-secondary py-2 px-3 text-xs"
+                >
                   <Share2 size={14} />
                 </button>
               </div>

@@ -22,7 +22,7 @@ const STYLES = `
     --red-light:     #991b1b;
     --gold:          #f59e0b;
     --gold-light:    #fde68a;
-    --white:         #0a0a0a;
+    --white:         #ffffff;
     --gray-100:      #f3f4f6;
     --gray-300:      #6b7280;
     --gray-400:      #4b5563;
@@ -2231,7 +2231,9 @@ export default function LandingPage() {
         <div className="ug-container">
           <div className="ug-nav-inner">
             <a href="#" className="ug-logo" onClick={() => setMobileOpen(false)}>
-              <div className="ug-logo-mark">🎓</div>
+              <div className="ug-logo-mark">
+                <img src="/uniguild.png" alt="UniGuild" />
+              </div>
               UniGuild
             </a>
 

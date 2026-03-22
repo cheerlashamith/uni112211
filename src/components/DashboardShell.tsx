@@ -4,7 +4,7 @@ import { Bell, Search, Menu, X, Check, Trash2, Clock, AlertCircle, LogOut } from
 import { supabase, handleSupabaseError, OperationType } from '../supabase';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
-import appLogo from '../../uniguild.png';
+const appLogo = '/uniguild.png';
 
 interface SidebarItem {
   id: string;

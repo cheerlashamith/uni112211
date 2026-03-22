@@ -1,11 +1,11 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   LayoutDashboard, School, Users, Calendar, Briefcase, Megaphone, 
   CheckSquare, BarChart3, Settings, ScrollText, TrendingUp, 
   ArrowUpRight, Clock, Download, Search, Filter, MoreVertical,
   UserPlus, Mail, Shield, UserX, ExternalLink, XCircle, Plus, X, Trash2, Edit,
-  User, CheckCircle2, AlertCircle, Camera, Upload
+  User, CheckCircle2, AlertCircle, Camera, Upload, ArrowLeft
 } from 'lucide-react';
 import { Line, Doughnut, Bar } from 'react-chartjs-2';
 import { 
@@ -251,12 +251,27 @@ export default function SuperAdminDashboard() {
     }
   };
 
+  const handleDeleteEvent = async (eventId: string) => {
+    try {
+      const { error } = await supabase.from('events').delete().eq('id', eventId);
+      if (error) {
+        setNotification({ message: `Event deletion failed: ${error.message}`, type: 'error' });
+        setTimeout(() => setNotification(null), 3500);
+        return;
+      }
+      setNotification({ message: 'Event deleted successfully!', type: 'success' });
+      setTimeout(() => setNotification(null), 3000);
+    } catch (error) {
+      setNotification({ message: 'Event deletion failed. Please try again.', type: 'error' });
+    }
+  };
+
   const renderTabContent = () => {
     const tabs: Record<string, React.ReactNode> = {
       overview: <OverviewTab />,
       colleges: <CollegesTab setNotification={setNotification} setConfirmModal={setConfirmModal} setPromptModal={setPromptModal} />,
       users: <UsersTab setNotification={setNotification} setConfirmModal={setConfirmModal} setPromptModal={setPromptModal} />,
-      events: <EventsTab events={events} onPost={handleCreateEvent} isPublishing={isPublishing} setNotification={setNotification} />,
+      events: <EventsTab events={events} onPost={handleCreateEvent} onDeleteEvent={handleDeleteEvent} isPublishing={isPublishing} setNotification={setNotification} setConfirmModal={setConfirmModal} />,
       jobs: <JobsTab jobs={jobs} onPost={handlePostJob} onUpdate={handleUpdateJob} isPosting={isPostingJob} setNotification={setNotification} />,
       announcements: <AnnouncementsTab onSend={handleSendAnnouncement} setNotification={setNotification} setConfirmModal={setConfirmModal} setPromptModal={setPromptModal} />,
       approvals: <ApprovalsTab setNotification={setNotification} setConfirmModal={setConfirmModal} />,
@@ -1153,7 +1168,9 @@ function UsersTab({ setNotification, setConfirmModal, setPromptModal }: {
   const [yearFilter, setYearFilter] = useState('All');
   const [users, setUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [roleModal, setRoleModal] = useState<{ user: any; selectedRole: string } | null>(null);
+  const [view, setView] = useState<'list' | 'role_change'>('list');
+  const [targetUser, setTargetUser] = useState<any>(null);
+  const [selectedRole, setSelectedRole] = useState('');
 
   const AVAILABLE_ROLES = [
     { value: 'student', label: 'Student' },
@@ -1195,6 +1212,11 @@ function UsersTab({ setNotification, setConfirmModal, setPromptModal }: {
     if (yearFilter !== 'All' && user.year !== yearFilter) return false;
     return true;
   });
+
+  const handleBackToList = () => {
+    setView('list');
+    setTargetUser(null);
+  };
 
   const handleRemoveUser = async (id: string, name: string) => {
     setConfirmModal({
@@ -1267,6 +1289,116 @@ function UsersTab({ setNotification, setConfirmModal, setPromptModal }: {
     });
   };
 
+  if (view === 'role_change' && targetUser) {
+    return (
+      <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+        <div className="flex items-center gap-4">
+          <button onClick={handleBackToList} className="p-2 hover:bg-gray-100 rounded-full transition-all text-gray-400">
+            <ArrowLeft size={24} />
+          </button>
+          <div>
+            <h3 className="text-2xl font-display font-bold text-gray-900">User Management</h3>
+            <p className="text-sm text-gray-400 uppercase tracking-widest font-bold">Access Control • {targetUser.email}</p>
+          </div>
+        </div>
+
+        <div className="card p-8 md:p-16 space-y-12">
+          <div className="flex flex-col md:flex-row justify-between items-start gap-8">
+            <div className="max-w-xl">
+              <h3 className="text-4xl font-display font-bold text-red-primary mb-4">Platform Permissions</h3>
+              <p className="text-lg text-gray-500 leading-relaxed">
+                Reassign user roles to adjust administrative access or student permissions across the UniGuild platform.
+              </p>
+            </div>
+            
+            <div className="w-full md:w-auto flex items-center gap-6 p-6 bg-gray-50 rounded-3xl border border-gray-100 min-w-[300px]">
+              <img 
+                src={targetUser.avatar || `https://picsum.photos/seed/${targetUser.id}/80/80`} 
+                className="w-20 h-20 rounded-2xl shadow-lg border-2 border-white" 
+                alt="" 
+              />
+              <div>
+                <p className="text-xl font-bold text-gray-900">{targetUser.name}</p>
+                <p className="text-sm text-gray-500">{targetUser.email}</p>
+                <div className="mt-2 text-[10px] font-bold text-red-primary uppercase bg-red-50 inline-block px-2 py-1 rounded">
+                  Current: {targetUser.role}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-6">
+            <label className="text-xs font-bold text-gray-400 uppercase block tracking-widest border-b border-gray-100 pb-4">Select New Global Role</label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {AVAILABLE_ROLES.map(role => (
+                <button
+                  key={role.value}
+                  onClick={() => setSelectedRole(role.value)}
+                  className={`p-6 rounded-2xl border-2 text-left transition-all group ${
+                    selectedRole === role.value 
+                      ? 'border-red-primary bg-red-50 shadow-lg shadow-red-500/5' 
+                      : 'border-gray-100 hover:border-red-primary/30 hover:bg-gray-50'
+                  }`}
+                >
+                  <div className="flex justify-between items-start mb-2">
+                    <p className={`font-bold text-lg ${selectedRole === role.value ? 'text-red-primary' : 'text-gray-900'}`}>{role.label}</p>
+                    <Shield size={18} className={selectedRole === role.value ? 'text-red-primary' : 'text-gray-300'} />
+                  </div>
+                  <p className="text-xs text-gray-500 leading-tight">System identifier: {role.value}</p>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="pt-8 flex justify-end gap-4 border-t border-gray-100">
+            <button 
+              onClick={handleBackToList}
+              className="px-10 py-4 rounded-xl font-bold text-gray-500 hover:bg-gray-50 transition-all"
+            >
+              Cancel
+            </button>
+            <button 
+              onClick={async () => {
+                try {
+                  const oldRole = targetUser.role;
+                  const { error } = await supabase
+                    .from('users')
+                    .update({ role: selectedRole })
+                    .eq('uid', targetUser.uid);
+
+                  if (error) {
+                    setNotification({ message: `Update failed: ${error.message}`, type: 'error' });
+                    return;
+                  }
+
+                  await supabase.from('audit_logs').insert({
+                    action: `Role changed from ${oldRole} to ${selectedRole} for user ${targetUser.email}`,
+                    performed_by: (await supabase.auth.getUser()).data.user?.id,
+                    target_user: targetUser.id,
+                    target_table: 'users',
+                    metadata: { oldRole, newRole: selectedRole }
+                  });
+
+                  setNotification({ 
+                    message: `Role changed successfully to ${AVAILABLE_ROLES.find(r => r.value === selectedRole)?.label}`, 
+                    type: 'success' 
+                  });
+                  handleBackToList();
+                } catch (error) {
+                  handleSupabaseError(error, OperationType.UPDATE, `users/${targetUser.id}`);
+                }
+              }}
+              disabled={selectedRole === targetUser.role}
+              className="px-12 py-4 rounded-xl bg-red-primary text-white font-bold hover:bg-red-700 transition-all shadow-xl shadow-red-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Update Permissions
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center flex-wrap gap-4">
@@ -1319,54 +1451,61 @@ function UsersTab({ setNotification, setConfirmModal, setPromptModal }: {
         Showing {filteredUsers.length} of {users.length} users
       </div>
 
-      <div className="card overflow-x-auto">
+      <div className="card border-none shadow-xl shadow-gray-200/50 overflow-x-auto">
         <table className="w-full text-left min-w-[600px]">
-          <thead className="bg-gray-50 border-b border-gray-200">
+          <thead className="bg-gray-50/50 border-b border-gray-100">
             <tr>
-              <th className="px-6 py-4 text-[10px] font-bold uppercase text-gray-400">User</th>
-              <th className="px-6 py-4 text-[10px] font-bold uppercase text-gray-400">Role</th>
-              <th className="px-6 py-4 text-[10px] font-bold uppercase text-gray-400">College</th>
-              <th className="px-6 py-4 text-[10px] font-bold uppercase text-gray-400">Status</th>
-              <th className="px-6 py-4 text-[10px] font-bold uppercase text-gray-400">Joined</th>
-              <th className="px-6 py-4 text-[10px] font-bold uppercase text-gray-400 text-right">Actions</th>
+              <th className="px-6 py-5 text-[10px] font-bold uppercase text-gray-400 tracking-widest">User Entity</th>
+              <th className="px-6 py-5 text-[10px] font-bold uppercase text-gray-400 tracking-widest">Designated Role</th>
+              <th className="px-6 py-5 text-[10px] font-bold uppercase text-gray-400 tracking-widest">College Mapping</th>
+              <th className="px-6 py-5 text-[10px] font-bold uppercase text-gray-400 tracking-widest">Operational Status</th>
+              <th className="px-6 py-5 text-[10px] font-bold uppercase text-gray-400 tracking-widest">Onboarded</th>
+              <th className="px-6 py-5 text-[10px] font-bold uppercase text-gray-400 tracking-widest text-right">Actions</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-100">
+          <tbody className="divide-y divide-gray-50">
             {loading ? (
               <tr>
-                <td colSpan={6} className="px-6 py-20 text-center text-gray-400">Loading users...</td>
+                <td colSpan={6} className="px-6 py-20 text-center text-gray-400 font-medium">Synchronizing user data...</td>
               </tr>
             ) : filteredUsers.length > 0 ? filteredUsers.map(user => (
-              <tr key={user.id} className="hover:bg-gray-50 transition-all">
-                <td className="px-6 py-4">
-                  <div className="flex items-center gap-3">
-                    <img src={user.avatar || `https://picsum.photos/seed/${user.id}/40/40`} className="w-8 h-8 rounded-full" alt="" />
+              <tr key={user.id} className="hover:bg-gray-50/50 transition-all group">
+                <td className="px-6 py-5">
+                  <div className="flex items-center gap-4">
+                    <img src={user.avatar || `https://picsum.photos/seed/${user.id}/40/40`} className="w-10 h-10 rounded-xl shadow-sm border-2 border-white group-hover:scale-110 transition-transform" alt="" />
                     <div>
-                      <p className="text-sm font-bold">{user.name}</p>
-                      <p className="text-[10px] text-gray-500">{user.email}</p>
+                      <p className="text-sm font-bold text-gray-900">{user.name}</p>
+                      <p className="text-[10px] text-gray-400 font-medium">{user.email}</p>
                     </div>
                   </div>
                 </td>
-                <td className="px-6 py-4">
-                  <span className="text-[10px] bg-gray-100 px-2 py-0.5 rounded font-bold uppercase">{user.role}</span>
+                <td className="px-6 py-5">
+                  <span className="text-[9px] bg-red-50 text-red-primary px-3 py-1.5 rounded-lg font-bold uppercase border border-red-primary/5 tracking-wider">{user.role}</span>
                 </td>
-                <td className="px-6 py-4 text-sm font-medium">{user.college || 'Unassigned'}</td>
-                <td className="px-6 py-4">
-                  <span className="text-[10px] bg-green-50 text-green-600 px-2 py-0.5 rounded font-bold uppercase">Active</span>
+                <td className="px-6 py-5 text-sm font-bold text-gray-700">{user.college || 'Unassigned'}</td>
+                <td className="px-6 py-5">
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-2 h-2 rounded-full bg-green-500 shadow-sm shadow-green-500/50" />
+                    <span className="text-[10px] text-green-600 font-bold uppercase tracking-wider">Active Status</span>
+                  </div>
                 </td>
-                <td className="px-6 py-4 text-sm text-gray-500">{user.createdAt ? new Date(user.createdAt).toLocaleDateString() : 'N/A'}</td>
-                <td className="px-6 py-4 text-right">
+                <td className="px-6 py-5 text-sm font-medium text-gray-400">{user.createdAt ? new Date(user.createdAt).toLocaleDateString() : 'N/A'}</td>
+                <td className="px-6 py-5 text-right">
                   <div className="flex justify-end gap-2">
-                    <button onClick={() => window.open(`mailto:${user.email}`, '_blank')} className="p-2 text-gray-400 hover:text-red-primary"><ExternalLink size={16} /></button>
+                    <button onClick={() => window.open(`mailto:${user.email}`, '_blank')} className="p-2.5 bg-white border border-gray-100 rounded-xl text-gray-400 hover:text-red-primary hover:border-red-primary/30 transition-all hover:shadow-sm"><ExternalLink size={16} /></button>
                     <button 
-                      onClick={() => setRoleModal({ user, selectedRole: user.role })}
-                      className="p-2 text-gray-400 hover:text-red-primary"
+                      onClick={() => {
+                        setTargetUser(user);
+                        setSelectedRole(user.role);
+                        setView('role_change');
+                      }}
+                      className="p-2.5 bg-white border border-gray-100 rounded-xl text-gray-400 hover:text-red-primary hover:border-red-primary/30 transition-all hover:shadow-sm"
                     >
                       <Shield size={16} />
                     </button>
                     <button 
                       onClick={() => handleRemoveUser(user.id, user.name)}
-                      className="p-2 text-gray-400 hover:text-red-primary"
+                      className="p-2.5 bg-white border border-gray-100 rounded-xl text-gray-400 hover:text-red-primary hover:border-red-primary/30 transition-all hover:shadow-sm"
                     >
                       <UserX size={16} />
                     </button>
@@ -1375,167 +1514,40 @@ function UsersTab({ setNotification, setConfirmModal, setPromptModal }: {
               </tr>
             )) : (
               <tr>
-                <td colSpan={6} className="px-6 py-20 text-center text-gray-400">No users found for this role.</td>
+                <td colSpan={6} className="px-6 py-20 text-center text-gray-400 border-none italic">No users matching your current filtration criteria were discovered.</td>
               </tr>
             )}
           </tbody>
         </table>
       </div>
-
-      {/* Role Change Modal */}
-      {roleModal && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-          <div 
-            className="absolute inset-0 bg-gray-900/60 backdrop-blur-sm"
-            onClick={() => setRoleModal(null)}
-          />
-          <motion.div 
-            initial={{ opacity: 0, scale: 0.95, y: 20 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.95, y: 20 }}
-            className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl overflow-hidden"
-          >
-            <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gradient-to-r from-red-primary to-red-dark text-white">
-              <div className="flex items-center gap-3">
-                <Shield size={24} />
-                <h3 className="text-xl font-display font-bold">Change User Role</h3>
-              </div>
-              <button onClick={() => setRoleModal(null)} className="p-1 hover:bg-white/20 rounded-full transition-all">
-                <X size={24} />
-              </button>
-            </div>
-            <div className="p-8 space-y-6">
-              <div className="flex items-center gap-4 p-4 bg-gray-50 rounded-xl">
-                <img 
-                  src={roleModal.user.avatar || `https://picsum.photos/seed/${roleModal.user.id}/40/40`} 
-                  className="w-12 h-12 rounded-full" 
-                  alt="" 
-                />
-                <div>
-                  <p className="font-bold">{roleModal.user.name}</p>
-                  <p className="text-sm text-gray-500">{roleModal.user.email}</p>
-                </div>
-              </div>
-              
-              <div>
-                <label className="text-[10px] font-bold text-gray-400 uppercase block mb-3 tracking-widest">Select New Role</label>
-                <div className="grid grid-cols-2 gap-3">
-                  {AVAILABLE_ROLES.map(role => (
-                    <button
-                      key={role.value}
-                      onClick={() => setRoleModal({ ...roleModal, selectedRole: role.value })}
-                      className={`p-4 rounded-xl border-2 text-left transition-all ${
-                        roleModal.selectedRole === role.value 
-                          ? 'border-red-primary bg-red-50' 
-                          : 'border-gray-200 hover:border-red-primary/50'
-                      }`}
-                    >
-                      <p className="font-bold text-sm">{role.label}</p>
-                      <p className="text-[10px] text-gray-400">{role.value}</p>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-            <div className="p-6 border-t border-gray-100 flex gap-4 bg-gray-50">
-              <button 
-                onClick={() => setRoleModal(null)}
-                className="flex-1 py-3 border border-gray-200 rounded-xl font-bold hover:bg-gray-100 transition-all"
-              >
-                Cancel
-              </button>
-              <button 
-                onClick={async () => {
-                  try {
-                    const oldRole = roleModal.user.role;
-                    await supabase
-                      .from('users')
-                      .update({ role: roleModal.selectedRole })
-                      .eq('uid', roleModal.user.uid);
-
-                    await supabase.from('audit_logs').insert({
-                      action: `Role changed from ${oldRole} to ${roleModal.selectedRole} for user ${roleModal.user.email}`,
-                      performed_by: (await supabase.auth.getUser()).data.user?.id,
-                      target_user: roleModal.user.id,
-                      target_table: 'users',
-                      metadata: { oldRole, newRole: roleModal.selectedRole }
-                    });
-
-                    setNotification({ 
-                      message: `Role changed to ${AVAILABLE_ROLES.find(r => r.value === roleModal.selectedRole)?.label} successfully`, 
-                      type: 'success' 
-                    });
-                    setRoleModal(null);
-                  } catch (error) {
-                    handleSupabaseError(error, OperationType.UPDATE, `users/${roleModal.user.id}`);
-                  }
-                }}
-                disabled={roleModal.selectedRole === roleModal.user.role}
-                className="flex-1 btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Confirm Change
-              </button>
-            </div>
-          </motion.div>
-        </div>
-      )}
     </div>
   );
 }
 
 // --- EVENTS TAB ---
-function EventsTab({ events, onPost, isPublishing, setNotification }: { 
+function EventsTab({ events, onPost, onDeleteEvent, isPublishing, setNotification, setConfirmModal }: { 
   events: any[], 
   onPost: (evt: any) => Promise<boolean>,
+  onDeleteEvent?: (eventId: string) => void,
   isPublishing?: boolean,
-  setNotification: (n: any) => void 
+  setNotification: (n: any) => void,
+  setConfirmModal?: (m: any) => void
 }) {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [managingEvent, setManagingEvent] = useState<any>(null);
   const [registrations, setRegistrations] = useState<any[]>([]);
   const [showScanner, setShowScanner] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [view, setView] = useState<'list' | 'create' | 'manage'>('list');
   const [newEvent, setNewEvent] = useState<{
-    name: string;
-    host: string;
-    category: string;
-    date: string;
-    capacity: string;
-    location: string;
-    description: string;
-    website: string;
-    bannerUrl: string;
-    status: string;
-    targetAudience: string;
-    fee: string;
+    name: string; host: string; category: string; date: string; capacity: string;
+    location: string; description: string; website: string; bannerUrl: string;
+    status: string; targetAudience: string; fee: string;
   }>({
-    name: '',
-    host: 'All',
-    category: 'Workshop',
-    date: '',
-    capacity: '',
-    location: '',
-    description: '',
-    website: '',
-    bannerUrl: '',
-    status: 'Upcoming',
-    targetAudience: 'All Students',
-    fee: ''
+    name: '', host: 'All', category: 'Workshop', date: '', capacity: '',
+    location: '', description: '', website: '', bannerUrl: '',
+    status: 'Upcoming', targetAudience: 'All Students', fee: ''
   });
-
-  useEffect(() => {
-    if (managingEvent) {
-      const fetchRegs = async () => {
-        const { data } = await supabase.from('registrations').select('*').eq('event_id', managingEvent.id);
-        if (data) setRegistrations(data.map(r => ({ ...r, studentName: r.student_name, studentEmail: r.student_email, certificateIssued: r.certificate_issued })));
-      };
-      fetchRegs();
-      const channel = supabase.channel(`event_regs_${managingEvent.id}`)
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'registrations', filter: `event_id=eq.${managingEvent.id}` }, () => fetchRegs())
-        .subscribe();
-      return () => { supabase.removeChannel(channel); };
-    }
-  }, [managingEvent]);
 
   const validateForm = () => {
     const newErrors: Record<string, string> = {};
@@ -1552,30 +1564,19 @@ function EventsTab({ events, onPost, isPublishing, setNotification }: {
   };
 
   const handleCreate = async () => {
-    if (!validateForm()) {
-      return;
-    }
+    if (!validateForm()) return;
     const ok = await onPost({
       ...newEvent,
       slots: { filled: 0, total: parseInt(newEvent.capacity) || 100 }
     });
     if (ok) {
-      setShowCreateModal(false);
       setErrors({});
       setNewEvent({
-        name: '',
-        host: 'All',
-        category: 'Workshop',
-        date: '',
-        capacity: '',
-        location: '',
-        description: '',
-        website: '',
-        bannerUrl: '',
-        status: 'Upcoming',
-        targetAudience: 'All Students',
-        fee: ''
+        name: '', host: 'All', category: 'Workshop', date: '', capacity: '',
+        location: '', description: '', website: '', bannerUrl: '',
+        status: 'Upcoming', targetAudience: 'All Students', fee: ''
       });
+      setView('list');
     }
   };
 
@@ -1606,13 +1607,11 @@ function EventsTab({ events, onPost, isPublishing, setNotification }: {
         setNotification({ message: `Attendance update failed: ${error.message}`, type: 'error' });
         return;
       }
-
       const result = data as { ok?: boolean; reason?: string } | null;
       if (!result?.ok) {
         setNotification({ message: `Attendance update failed: ${result?.reason || 'unknown reason'}`, type: 'error' });
         return;
       }
-
       setNotification({ message: 'Attendance marked successfully!', type: 'success' });
     } catch (error) {
       setNotification({ message: 'Attendance update failed. Please try again.', type: 'error' });
@@ -1621,59 +1620,439 @@ function EventsTab({ events, onPost, isPublishing, setNotification }: {
 
   const handleScan = (data: string | null) => {
     if (data) {
-      // Assuming QR code contains registration ID
       handleMarkAttendance(data);
       setShowScanner(false);
       setNotification({ message: "Attendance marked successfully!", type: 'success' });
     }
   };
 
+  useEffect(() => {
+    if (managingEvent) {
+      const fetchRegs = async () => {
+        const { data } = await supabase.from('registrations').select('*').eq('event_id', managingEvent.id);
+        if (data) setRegistrations(data.map(r => ({ ...r, studentName: r.student_name, studentEmail: r.student_email, certificateIssued: r.certificate_issued })));
+      };
+      fetchRegs();
+      const channel = supabase.channel(`event_regs_${managingEvent.id}`)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'registrations', filter: `event_id=eq.${managingEvent.id}` }, () => fetchRegs())
+        .subscribe();
+      return () => { supabase.removeChannel(channel); };
+    }
+  }, [managingEvent]);
+
+  const handleBackToList = () => {
+    setView('list');
+    setManagingEvent(null);
+    setShowCreateModal(false);
+  };
+
+  if (view === 'create') {
+    return (
+      <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+        <div className="flex items-center gap-4">
+          <button onClick={handleBackToList} className="p-2 hover:bg-gray-100 rounded-full transition-all text-gray-400">
+            <X size={24} />
+          </button>
+          <div>
+            <h3 className="text-2xl font-display font-bold text-gray-900">Create New Event</h3>
+            <p className="text-sm text-gray-500">Fill in the details to publish a new event across all colleges.</p>
+          </div>
+        </div>
+
+        <div className="card p-8 md:p-16 space-y-10">
+          <div>
+            <h3 className="text-3xl font-display font-bold text-red-primary mb-2">Event Details</h3>
+            <p className="text-base text-gray-500">Basic information about the event and its target audience.</p>
+          </div>
+          
+          <div className="grid md:grid-cols-2 gap-10">
+            <div className="md:col-span-2">
+              <label className="text-xs font-bold text-gray-400 uppercase block mb-3 tracking-widest">Event Name</label>
+              <input 
+                type="text" 
+                className="w-full bg-gray-50 border border-gray-200 rounded-xl p-4 text-base outline-none focus:border-red-primary focus:bg-white transition-all shadow-sm" 
+                placeholder="e.g. Annual Tech Symposium"
+                value={newEvent.name}
+                onChange={e => setNewEvent({...newEvent, name: e.target.value})}
+              />
+            </div>
+            <div>
+              <label className="text-xs font-bold text-gray-400 uppercase block mb-3 tracking-widest">Host Institution</label>
+              <select 
+                className="w-full bg-gray-50 border border-gray-200 rounded-xl p-4 text-base outline-none focus:border-red-primary focus:bg-white transition-all shadow-sm"
+                value={newEvent.host}
+                onChange={e => setNewEvent({...newEvent, host: e.target.value})}
+              >
+                <option value="All">All Institutions</option>
+                {UniGuildData.colleges.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs font-bold text-gray-400 uppercase block mb-3 tracking-widest">Category</label>
+              <select 
+                className="w-full bg-gray-50 border border-gray-200 rounded-xl p-4 text-base outline-none focus:border-red-primary focus:bg-white transition-all shadow-sm"
+                value={newEvent.category}
+                onChange={e => setNewEvent({...newEvent, category: e.target.value})}
+              >
+                {['Hackathon', 'Webinar', 'Workshop', 'Competition', 'Cultural'].map(cat => (
+                  <option key={cat} value={cat}>{cat}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs font-bold text-gray-400 uppercase block mb-3 tracking-widest">Event Date</label>
+              <input 
+                type="date" 
+                className="w-full bg-gray-50 border border-gray-200 rounded-xl p-4 text-base outline-none focus:border-red-primary focus:bg-white transition-all shadow-sm" 
+                value={newEvent.date}
+                onChange={e => setNewEvent({...newEvent, date: e.target.value})}
+              />
+            </div>
+            <div>
+              <label className="text-xs font-bold text-gray-400 uppercase block mb-3 tracking-widest">Capacity</label>
+              <input 
+                type="number" 
+                className="w-full bg-gray-50 border border-gray-200 rounded-xl p-4 text-base outline-none focus:border-red-primary focus:bg-white transition-all shadow-sm" 
+                placeholder="e.g. 500"
+                value={newEvent.capacity}
+                onChange={e => setNewEvent({...newEvent, capacity: e.target.value})}
+              />
+            </div>
+            <div className="md:col-span-2 grid md:grid-cols-2 gap-10 border-t border-gray-100 pt-10 mt-4">
+              <div>
+                <label className="text-xs font-bold text-gray-400 uppercase block mb-3 tracking-widest">Target Audience</label>
+                <select 
+                  className="w-full bg-gray-50 border border-gray-200 rounded-xl p-4 text-base outline-none focus:border-red-primary focus:bg-white transition-all shadow-sm"
+                  value={newEvent.targetAudience || 'All Students'}
+                  onChange={e => setNewEvent({...newEvent, targetAudience: e.target.value})}
+                >
+                  <option>All Students</option>
+                  <option>Specific Branch</option>
+                  <option>Specific Year</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-xs font-bold text-gray-400 uppercase block mb-3 tracking-widest">Registration Fee</label>
+                <input 
+                  type="text" 
+                  className="w-full bg-gray-50 border border-gray-200 rounded-xl p-4 text-base outline-none focus:border-red-primary focus:bg-white transition-all shadow-sm" 
+                  placeholder="e.g. Free or ₹100"
+                  value={newEvent.fee || ''}
+                  onChange={e => setNewEvent({...newEvent, fee: e.target.value})}
+                />
+              </div>
+            </div>
+            <div className="md:col-span-2">
+              <label className="text-xs font-bold text-gray-400 uppercase block mb-3 tracking-widest">Location / Link</label>
+              <input 
+                type="text" 
+                className="w-full bg-gray-50 border border-gray-200 rounded-xl p-4 text-base outline-none focus:border-red-primary focus:bg-white transition-all shadow-sm" 
+                placeholder="e.g. Main Auditorium or Zoom Link"
+                value={newEvent.location}
+                onChange={e => setNewEvent({...newEvent, location: e.target.value})}
+              />
+            </div>
+            <div className="md:col-span-2">
+              <label className="text-xs font-bold text-gray-400 uppercase block mb-3 tracking-widest">Banner Image</label>
+              <div className="flex flex-col sm:flex-row gap-4">
+                <input 
+                  type="text" 
+                  className="flex-1 bg-gray-50 border border-gray-200 rounded-xl p-4 text-base outline-none focus:border-red-primary focus:bg-white transition-all shadow-sm" 
+                  placeholder="Paste banner image URL here..."
+                  value={newEvent.bannerUrl}
+                  onChange={e => setNewEvent({...newEvent, bannerUrl: e.target.value})}
+                />
+                <input
+                  type="file"
+                  id="banner-upload-inline"
+                  className="hidden"
+                  accept="image/*"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      if (file.size > 2 * 1024 * 1024) {
+                        setNotification({ message: "Image size should be less than 2MB", type: 'error' });
+                        return;
+                      }
+                      const reader = new FileReader();
+                      reader.onloadend = () => {
+                        setNewEvent({ ...newEvent, bannerUrl: reader.result as string });
+                      };
+                      reader.readAsDataURL(file);
+                    }
+                  }}
+                />
+                <button 
+                  type="button"
+                  onClick={() => document.getElementById('banner-upload-inline')?.click()}
+                  className="px-8 py-4 bg-gray-100 text-gray-700 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-gray-200 transition-all shadow-sm"
+                >
+                  <Upload size={20} /> Browse File
+                </button>
+              </div>
+            </div>
+            <div className="md:col-span-2">
+              <label className="text-xs font-bold text-gray-400 uppercase block mb-3 tracking-widest">Website URL (Optional)</label>
+              <input 
+                type="url" 
+                className="w-full bg-gray-50 border border-gray-200 rounded-xl p-4 text-base outline-none focus:border-red-primary focus:bg-white transition-all shadow-sm" 
+                placeholder="https://event-website.com"
+                value={newEvent.website}
+                onChange={e => setNewEvent({...newEvent, website: e.target.value})}
+              />
+            </div>
+            <div className="md:col-span-2">
+              <label className="text-xs font-bold text-gray-400 uppercase block mb-3 tracking-widest">Detailed Description</label>
+              <textarea 
+                className="w-full bg-gray-50 border border-gray-200 rounded-xl p-4 text-base outline-none focus:border-red-primary focus:bg-white transition-all h-48 shadow-sm" 
+                placeholder="What is this event about? Mention any prerequisites, rules, or agenda..."
+                value={newEvent.description}
+                onChange={e => setNewEvent({...newEvent, description: e.target.value})}
+              />
+            </div>
+          </div>
+
+          <div className="pt-10 border-t border-gray-100 flex justify-end gap-5">
+            <button onClick={handleBackToList} className="px-10 py-4 rounded-xl text-gray-500 font-bold hover:bg-gray-50 transition-all">Discard Changes</button>
+            <button 
+              onClick={async () => {
+                await handleCreate();
+                if (Object.keys(errors).length === 0) setView('list');
+              }} 
+              disabled={isPublishing}
+              className="px-12 py-4 rounded-xl bg-red-primary text-white font-bold flex items-center gap-3 hover:bg-red-dark transition-all shadow-lg shadow-red-500/20 disabled:opacity-50"
+            >
+              {isPublishing ? (
+                <>
+                  <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  Publishing...
+                </>
+              ) : (
+                'Publish Event'
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (view === 'manage' && managingEvent) {
+    return (
+      <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+        <div className="flex items-center gap-4">
+          <button onClick={handleBackToList} className="p-2 hover:bg-gray-100 rounded-full transition-all text-gray-400">
+            <X size={24} />
+          </button>
+          <div>
+            <h3 className="text-2xl font-display font-bold text-gray-900">Manage: {managingEvent.name}</h3>
+            <p className="text-sm font-bold text-gray-400 uppercase tracking-widest">{managingEvent.date} • {managingEvent.host}</p>
+          </div>
+        </div>
+
+        <div className="card p-8 md:p-12 space-y-10">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+            <div>
+              <h3 className="text-3xl font-display font-bold text-red-primary mb-2">Registration Oversight</h3>
+              <p className="text-base text-gray-500">Monitor attendee registrations and track event metrics.</p>
+            </div>
+            <div className="flex gap-4">
+              <button 
+                onClick={() => setShowScanner(true)}
+                className="px-6 py-3 rounded-xl bg-red-primary text-white font-bold text-sm flex items-center gap-2 hover:bg-red-dark transition-all shadow-lg shadow-red-500/10"
+              >
+                <Camera size={20} /> Live Attendance Scanner
+              </button>
+              <button 
+                onClick={() => {
+                  const csv = [
+                    ['Student Name', 'Email', 'College', 'Department', 'Status'],
+                    ...registrations.map(r => [r.studentName, r.studentEmail, r.college, r.department, r.status])
+                  ].map(e => e.join(",")).join("\n");
+                  const blob = new Blob([csv], { type: 'text/csv' });
+                  const url = window.URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.setAttribute('href', url);
+                  a.setAttribute('download', `${managingEvent.name}-registrations.csv`);
+                  a.click();
+                }}
+                className="px-6 py-3 rounded-xl bg-gray-100 text-gray-700 font-bold text-sm flex items-center gap-2 hover:bg-gray-200 transition-all"
+              >
+                <Download size={20} /> Export CSV
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+            <div className="bg-gray-50 rounded-2xl p-6 border border-gray-100">
+              <div className="text-3xl font-mono font-bold text-gray-900">{registrations.length}</div>
+              <div className="text-xs font-bold text-gray-400 uppercase tracking-widest mt-1">Total Registered</div>
+            </div>
+            <div className="bg-gray-50 rounded-2xl p-6 border border-gray-100">
+              <div className="text-3xl font-mono font-bold text-green-600">{registrations.filter(r => r.status === 'attended').length}</div>
+              <div className="text-xs font-bold text-gray-400 uppercase tracking-widest mt-1">Checked In</div>
+            </div>
+            <div className="bg-gray-50 rounded-2xl p-6 border border-gray-100">
+              <div className="text-3xl font-mono font-bold text-amber-600">{registrations.filter(r => r.status === 'registered').length}</div>
+              <div className="text-xs font-bold text-gray-400 uppercase tracking-widest mt-1">Waitlist / Pending</div>
+            </div>
+            <div className="bg-gray-50 rounded-2xl p-6 border border-gray-100">
+              <div className="text-3xl font-mono font-bold text-red-primary">{Math.round((registrations.filter(r => r.status === 'attended').length / (registrations.length || 1)) * 100)}%</div>
+              <div className="text-xs font-bold text-gray-400 uppercase tracking-widest mt-1">Attendance Rate</div>
+            </div>
+          </div>
+
+          <div className="border border-gray-100 rounded-3xl overflow-hidden">
+            <table className="w-full text-left">
+              <thead className="bg-gray-50 border-b border-gray-100">
+                <tr>
+                  <th className="px-8 py-5 text-xs font-bold uppercase text-gray-400 tracking-widest">Student</th>
+                  <th className="px-8 py-5 text-xs font-bold uppercase text-gray-400 tracking-widest">College Details</th>
+                  <th className="px-8 py-5 text-xs font-bold uppercase text-gray-400 tracking-widest text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {registrations.length === 0 ? (
+                  <tr><td colSpan={3} className="px-8 py-10 text-center text-gray-400 italic">No registrations for this event yet.</td></tr>
+                ) : (
+                  registrations.map((reg) => (
+                    <tr key={reg.id} className="hover:bg-gray-50/50 transition-all">
+                      <td className="px-8 py-6">
+                        <div className="flex flex-col">
+                          <span className="font-bold text-gray-900 text-base">{reg.studentName}</span>
+                          <span className="text-sm text-gray-400">{reg.studentEmail}</span>
+                        </div>
+                      </td>
+                      <td className="px-8 py-6">
+                        <div className="flex flex-col">
+                          <span className="text-sm font-medium text-gray-700">{reg.college}</span>
+                          <span className="text-xs text-gray-400">{reg.department} • {reg.year} Year</span>
+                        </div>
+                      </td>
+                      <td className="px-8 py-6 text-right">
+                        <div className="flex justify-end gap-3">
+                          {!reg.certificateIssued && reg.status === 'attended' && (
+                            <button 
+                              onClick={() => handleIssueCertificate(reg.id)}
+                              className="px-4 py-2 rounded-lg bg-green-50 text-green-600 font-bold text-xs hover:bg-green-100 transition-all"
+                            >
+                              Issue Cert
+                            </button>
+                          )}
+                          {reg.certificateIssued && (
+                            <span className="flex items-center gap-1 text-green-600 font-bold text-xs bg-green-50 px-3 py-2 rounded-lg">
+                              <Shield size={12} /> Certified
+                            </span>
+                          )}
+                          {reg.status !== 'attended' && (
+                            <button 
+                              onClick={() => handleMarkAttendance(reg.id)}
+                              className="px-4 py-2 rounded-lg bg-red-50 text-red-primary font-bold text-xs hover:bg-red-100 transition-all"
+                            >
+                              Mark Presence
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h3 className="text-2xl font-display font-bold">Event Management</h3>
+    <div className="space-y-8 animate-in fade-in duration-500">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+        <div>
+          <h3 className="text-3xl font-display font-bold text-gray-900 tracking-tight">Event Ecosystem</h3>
+          <p className="text-base text-gray-500 mt-1">Monitor, create, and manage cross-institutional events.</p>
+        </div>
         <button 
-          onClick={() => setShowCreateModal(true)}
-          className="btn-primary flex items-center gap-2"
+          onClick={() => setView('create')}
+          className="px-8 py-4 rounded-xl bg-red-primary text-white font-bold flex items-center gap-3 hover:bg-red-dark transition-all shadow-xl shadow-red-500/20"
         >
-          <Calendar size={18} /> Create Event
+          <Plus size={24} /> New Event
         </button>
       </div>
 
-      <div className="card overflow-hidden">
+      <div className="card border-none shadow-xl shadow-gray-200/50 overflow-hidden">
         <table className="w-full text-left">
-          <thead className="bg-gray-50 border-b border-gray-200">
+          <thead className="bg-gray-50/50 border-b border-gray-100">
             <tr>
-              <th className="px-6 py-4 text-[10px] font-bold uppercase text-gray-400">Event Name</th>
-              <th className="px-6 py-4 text-[10px] font-bold uppercase text-gray-400">Host College</th>
-              <th className="px-6 py-4 text-[10px] font-bold uppercase text-gray-400">Date</th>
-              <th className="px-6 py-4 text-[10px] font-bold uppercase text-gray-400">Participants</th>
-              <th className="px-6 py-4 text-[10px] font-bold uppercase text-gray-400">Status</th>
-              <th className="px-6 py-4 text-[10px] font-bold uppercase text-gray-400 text-right">Actions</th>
+              <th className="px-8 py-6 text-xs font-bold uppercase text-gray-400 tracking-widest">Event Identity</th>
+              <th className="px-8 py-6 text-xs font-bold uppercase text-gray-400 tracking-widest">Host Institution</th>
+              <th className="px-8 py-6 text-xs font-bold uppercase text-gray-400 tracking-widest text-center">Engagement</th>
+              <th className="px-8 py-6 text-xs font-bold uppercase text-gray-400 tracking-widest text-right">Action Interface</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {events.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-6 py-12 text-center text-gray-400">No events found.</td>
+                <td colSpan={4} className="px-8 py-20 text-center">
+                  <div className="flex flex-col items-center gap-3 opacity-30">
+                    <Calendar size={64} />
+                    <p className="font-bold text-xl uppercase tracking-widest">No Events Found</p>
+                  </div>
+                </td>
               </tr>
             ) : (
               events.map(event => (
-                <tr key={event.id} className="hover:bg-gray-50 transition-all">
-                  <td className="px-6 py-4 font-bold text-sm">{event.name}</td>
-                  <td className="px-6 py-4 text-sm">{event.host}</td>
-                  <td className="px-6 py-4 text-sm">{event.date}</td>
-                  <td className="px-6 py-4 font-mono text-sm">{event.slots?.filled || 0} / {event.slots?.total || 0}</td>
-                  <td className="px-6 py-4">
-                    <span className="text-[10px] bg-red-50 text-red-primary px-2 py-0.5 rounded font-bold uppercase">{event.status}</span>
+                <tr key={event.id} className="hover:bg-gray-50 transition-all group">
+                  <td className="px-8 py-6">
+                    <div className="flex flex-col">
+                      <span className="font-bold text-gray-900 text-lg group-hover:text-red-primary transition-colors">{event.name}</span>
+                      <span className="text-sm text-gray-400 font-medium flex items-center gap-2 mt-1">
+                        <Calendar size={14} className="opacity-50" /> {event.date} • {event.category}
+                      </span>
+                    </div>
                   </td>
-                  <td className="px-6 py-4 text-right">
-                    <button 
-                      onClick={() => setManagingEvent(event)}
-                      className="btn-secondary py-1.5 px-3 text-[10px]"
-                    >
-                      Manage
-                    </button>
+                  <td className="px-8 py-6">
+                    <span className="text-base font-medium text-gray-700 bg-gray-100 px-4 py-2 rounded-full border border-gray-200">{event.host}</span>
+                  </td>
+                  <td className="px-8 py-6 text-center">
+                    <div className="flex flex-col items-center">
+                      <span className="font-mono font-bold text-gray-900 text-lg">{event.slots?.filled || 0} / {event.slots?.total || 0}</span>
+                      <div className="w-24 h-1.5 bg-gray-100 rounded-full mt-2 overflow-hidden border border-gray-100">
+                        <div 
+                          className="h-full bg-red-primary" 
+                          style={{ width: `${Math.min(((event.slots?.filled || 0) / (event.slots?.total || 1)) * 100, 100)}%` }} 
+                        />
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-8 py-6 text-right">
+                    <div className="flex justify-end gap-2">
+                      <button 
+                        onClick={() => {
+                          setManagingEvent(event);
+                          setView('manage');
+                        }}
+                        className="px-6 py-3 rounded-xl bg-red-primary text-white font-bold text-xs hover:bg-red-700 transition-all shadow-lg shadow-red-500/20 flex items-center gap-2"
+                      >
+                        Management <ExternalLink size={14} />
+                      </button>
+                      <button 
+                        onClick={() => {
+                          if (setConfirmModal && onDeleteEvent) {
+                            setConfirmModal({
+                              isOpen: true,
+                              title: 'Delete Event',
+                              message: `Are you sure you want to delete "${event.name}"? This action cannot be undone and will remove all registrations.`,
+                              onConfirm: () => onDeleteEvent(event.id)
+                            });
+                          }
+                        }}
+                        className="p-3 bg-gray-50 text-gray-400 hover:text-red-primary hover:bg-red-50 rounded-xl transition-all"
+                        title="Delete Event"
+                      >
+                        <Trash2 size={18} />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))
@@ -1681,303 +2060,6 @@ function EventsTab({ events, onPost, isPublishing, setNotification }: {
           </tbody>
         </table>
       </div>
-
-      {/* Create Event Modal */}
-      <AnimatePresence>
-        {showCreateModal && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setShowCreateModal(false)}
-              className="absolute inset-0 bg-gray-900/60 backdrop-blur-sm"
-            />
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="relative w-full max-w-2xl bg-white rounded-2xl shadow-2xl overflow-hidden"
-            >
-              <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-red-primary text-white">
-                <h3 className="text-xl font-display font-bold">Create New Event</h3>
-                <button onClick={() => setShowCreateModal(false)} className="p-1 hover:bg-white/20 rounded-full transition-all">
-                  <X size={24} />
-                </button>
-              </div>
-              
-              <div className="p-8 max-h-[70vh] overflow-y-auto space-y-6">
-                <div className="grid md:grid-cols-2 gap-6">
-                  <div className="md:col-span-2">
-                    <label className="text-[10px] font-bold text-gray-400 uppercase block mb-2">Event Name</label>
-                    <input 
-                      type="text" 
-                      className="w-full bg-gray-50 border border-gray-200 rounded-lg p-3 text-sm outline-none focus:border-red-primary" 
-                      placeholder="e.g. Annual Tech Symposium"
-                      value={newEvent.name}
-                      onChange={e => setNewEvent({...newEvent, name: e.target.value})}
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-gray-400 uppercase block mb-2">Host Institution</label>
-                    <select 
-                      className="w-full bg-gray-50 border border-gray-200 rounded-lg p-3 text-sm outline-none focus:border-red-primary"
-                      value={newEvent.host}
-                      onChange={e => setNewEvent({...newEvent, host: e.target.value})}
-                    >
-                      <option value="All">All Institutions</option>
-                      {UniGuildData.colleges.map(c => <option key={c} value={c}>{c}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-gray-400 uppercase block mb-2">Category</label>
-                    <select 
-                      className="w-full bg-gray-50 border border-gray-200 rounded-lg p-3 text-sm outline-none focus:border-red-primary"
-                      value={newEvent.category}
-                      onChange={e => setNewEvent({...newEvent, category: e.target.value})}
-                    >
-                      {['Hackathon', 'Webinar', 'Workshop', 'Competition', 'Cultural'].map(cat => (
-                        <option key={cat} value={cat}>{cat}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-gray-400 uppercase block mb-2">Event Date</label>
-                    <input 
-                      type="date" 
-                      className="w-full bg-gray-50 border border-gray-200 rounded-lg p-3 text-sm outline-none focus:border-red-primary" 
-                      value={newEvent.date}
-                      onChange={e => setNewEvent({...newEvent, date: e.target.value})}
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-gray-400 uppercase block mb-2">Capacity</label>
-                    <input 
-                      type="number" 
-                      className="w-full bg-gray-50 border border-gray-200 rounded-lg p-3 text-sm outline-none focus:border-red-primary" 
-                      placeholder="e.g. 500"
-                      value={newEvent.capacity}
-                      onChange={e => setNewEvent({...newEvent, capacity: e.target.value})}
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-gray-400 uppercase block mb-2">Target Audience</label>
-                    <select 
-                      className="w-full bg-gray-50 border border-gray-200 rounded-lg p-3 text-sm outline-none focus:border-red-primary"
-                      value={newEvent.targetAudience || 'All Students'}
-                      onChange={e => setNewEvent({...newEvent, targetAudience: e.target.value})}
-                    >
-                      <option>All Students</option>
-                      <option>Specific Branch</option>
-                      <option>Specific Year</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-gray-400 uppercase block mb-2">Registration Fee</label>
-                    <input 
-                      type="text" 
-                      className="w-full bg-gray-50 border border-gray-200 rounded-lg p-3 text-sm outline-none focus:border-red-primary" 
-                      placeholder="e.g. Free or ₹100"
-                      value={newEvent.fee || ''}
-                      onChange={e => setNewEvent({...newEvent, fee: e.target.value})}
-                    />
-                  </div>
-                  <div className="md:col-span-2">
-                    <label className="text-[10px] font-bold text-gray-400 uppercase block mb-2">Location / Link</label>
-                    <input 
-                      type="text" 
-                      className="w-full bg-gray-50 border border-gray-200 rounded-lg p-3 text-sm outline-none focus:border-red-primary" 
-                      placeholder="e.g. Main Auditorium or Zoom Link"
-                      value={newEvent.location}
-                      onChange={e => setNewEvent({...newEvent, location: e.target.value})}
-                    />
-                  </div>
-                  <div className="md:col-span-2">
-                    <label className="text-[10px] font-bold text-gray-400 uppercase block mb-2">Banner Image URL</label>
-                    <div className="flex gap-2">
-                      <input 
-                        type="text" 
-                        className="flex-1 bg-gray-50 border border-gray-200 rounded-lg p-3 text-sm outline-none focus:border-red-primary" 
-                        placeholder="https://example.com/banner.jpg"
-                        value={newEvent.bannerUrl}
-                        onChange={e => setNewEvent({...newEvent, bannerUrl: e.target.value})}
-                      />
-                      <input
-                        type="file"
-                        id="banner-upload"
-                        className="hidden"
-                        accept="image/*"
-                        onChange={(e) => {
-                          const file = e.target.files?.[0];
-                          if (file) {
-                            const reader = new FileReader();
-                            reader.onloadend = () => {
-                              setNewEvent({ ...newEvent, bannerUrl: reader.result as string });
-                            };
-                            reader.readAsDataURL(file);
-                          }
-                        }}
-                      />
-                      <button 
-                        type="button"
-                        onClick={() => document.getElementById('banner-upload')?.click()}
-                        className="btn-secondary p-3 flex items-center gap-2 text-xs"
-                      >
-                        <Upload size={16} /> Upload
-                      </button>
-                    </div>
-                  </div>
-                  <div className="md:col-span-2">
-                    <label className="text-[10px] font-bold text-gray-400 uppercase block mb-2">Website (Optional)</label>
-                    <input 
-                      type="url" 
-                      className="w-full bg-gray-50 border border-gray-200 rounded-lg p-3 text-sm outline-none focus:border-red-primary" 
-                      placeholder="https://event-website.com"
-                      value={newEvent.website}
-                      onChange={e => setNewEvent({...newEvent, website: e.target.value})}
-                    />
-                  </div>
-                  <div className="md:col-span-2">
-                    <label className="text-[10px] font-bold text-gray-400 uppercase block mb-2">Description</label>
-                    <textarea 
-                      className="w-full bg-gray-50 border border-gray-200 rounded-lg p-3 text-sm outline-none focus:border-red-primary h-32" 
-                      placeholder="Describe the event..."
-                      value={newEvent.description}
-                      onChange={e => setNewEvent({...newEvent, description: e.target.value})}
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div className="p-6 bg-gray-50 border-t border-gray-100 flex justify-end gap-3">
-                <button onClick={() => setShowCreateModal(false)} className="btn-secondary px-6">Cancel</button>
-                    <button 
-                      onClick={handleCreate} 
-                      disabled={isPublishing}
-                      className="btn-primary w-full py-3 flex items-center justify-center gap-2"
-                    >
-                      {isPublishing ? (
-                        <>
-                          <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                          Creating...
-                        </>
-                      ) : (
-                        'Create Event'
-                      )}
-                    </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* Manage Event Modal */}
-      <AnimatePresence>
-        {managingEvent && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setManagingEvent(null)}
-              className="absolute inset-0 bg-gray-900/60 backdrop-blur-sm"
-            />
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="relative w-full max-w-4xl bg-white rounded-2xl shadow-2xl overflow-hidden"
-            >
-              <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-red-primary text-white">
-                <div>
-                  <h3 className="text-xl font-display font-bold">Manage {managingEvent.name}</h3>
-                  <p className="text-xs opacity-80">{managingEvent.date} • {managingEvent.host}</p>
-                </div>
-                <button onClick={() => setManagingEvent(null)} className="p-1 hover:bg-white/20 rounded-full transition-all">
-                  <X size={24} />
-                </button>
-              </div>
-              
-              <div className="p-6 max-h-[70vh] overflow-y-auto space-y-6">
-                <div className="flex justify-between items-center">
-                  <h4 className="font-bold">Registrations ({registrations.length})</h4>
-                  <button 
-                    onClick={() => setShowScanner(true)}
-                    className="btn-primary py-2 px-4 text-xs flex items-center gap-2"
-                  >
-                    <Camera size={16} /> Scan QR Attendance
-                  </button>
-                </div>
-
-      <div className="card overflow-x-auto">
-        <table className="w-full text-left min-w-[600px]">
-                    <thead className="bg-gray-50 border-b border-gray-200">
-                      <tr>
-                        <th className="px-4 py-3 text-[10px] font-bold uppercase text-gray-400">Student</th>
-                        <th className="px-4 py-3 text-[10px] font-bold uppercase text-gray-400">Attendance</th>
-                        <th className="px-4 py-3 text-[10px] font-bold uppercase text-gray-400">Certificate</th>
-                        <th className="px-4 py-3 text-[10px] font-bold uppercase text-gray-400 text-right">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100">
-                      {registrations.length === 0 ? (
-                        <tr>
-                          <td colSpan={4} className="px-4 py-8 text-center text-gray-400">No registrations yet.</td>
-                        </tr>
-                      ) : (
-                        registrations.map(reg => (
-                          <tr key={reg.id} className="hover:bg-gray-50 transition-all">
-                            <td className="px-4 py-3">
-                              <p className="text-sm font-bold">{reg.studentName}</p>
-                              <p className="text-[10px] text-gray-500">{reg.studentEmail}</p>
-                            </td>
-                            <td className="px-4 py-3">
-                              {reg.attended ? (
-                                <span className="text-[10px] bg-green-50 text-green-600 px-2 py-0.5 rounded font-bold uppercase">Present</span>
-                              ) : (
-                                <span className="text-[10px] bg-gray-50 text-gray-400 px-2 py-0.5 rounded font-bold uppercase">Absent</span>
-                              )}
-                            </td>
-                            <td className="px-4 py-3">
-                              {reg.certificateIssued ? (
-                                <span className="text-[10px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded font-bold uppercase">Issued</span>
-                              ) : (
-                                <span className="text-[10px] bg-gray-50 text-gray-400 px-2 py-0.5 rounded font-bold uppercase">Pending</span>
-                              )}
-                            </td>
-                            <td className="px-4 py-3 text-right space-x-2">
-                              {!reg.attended && (
-                                <button 
-                                  onClick={() => handleMarkAttendance(reg.id)}
-                                  className="text-green-600 hover:underline text-xs font-bold"
-                                >
-                                  Mark Present
-                                </button>
-                              )}
-                              {!reg.certificateIssued && reg.attended && (
-                                <button 
-                                  onClick={() => handleIssueCertificate(reg.id)}
-                                  className="text-blue-600 hover:underline text-xs font-bold"
-                                >
-                                  Issue Cert
-                                </button>
-                              )}
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              <div className="p-6 bg-gray-50 border-t border-gray-100 flex justify-end">
-                <button onClick={() => setManagingEvent(null)} className="btn-secondary px-6">Close</button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
 
       {/* QR Scanner Modal */}
       <AnimatePresence>
@@ -1998,7 +2080,7 @@ function EventsTab({ events, onPost, isPublishing, setNotification }: {
             >
               <div className="p-4 border-b border-gray-100 flex justify-between items-center">
                 <h3 className="font-bold">Scan Attendance QR</h3>
-                <button onClick={() => setShowScanner(false)} className="p-1 hover:bg-100 rounded-full">
+                <button onClick={() => setShowScanner(false)} className="p-1 hover:bg-gray-100 rounded-full">
                   <X size={20} />
                 </button>
               </div>
@@ -2027,10 +2109,12 @@ function JobsTab({ jobs, onPost, onUpdate, isPosting, setNotification }: {
   isPosting?: boolean,
   setNotification: (n: any) => void 
 }) {
-  const [showPostModal, setShowPostModal] = useState(false);
+  const [view, setView] = useState<'list' | 'post' | 'edit' | 'applications'>('list');
   const [editingJob, setEditingJob] = useState<any>(null);
   const [viewingApplications, setViewingApplications] = useState<any>(null);
   const [applications, setApplications] = useState<any[]>([]);
+  const logoInputRef = useRef<HTMLInputElement>(null);
+  const editLogoInputRef = useRef<HTMLInputElement>(null);
   const [newJob, setNewJob] = useState({
     title: '',
     company: '',
@@ -2061,7 +2145,7 @@ function JobsTab({ jobs, onPost, onUpdate, isPosting, setNotification }: {
       skills: typeof newJob.skills === 'string' ? newJob.skills.split(',').map(s => s.trim()) : newJob.skills
     });
     if (ok) {
-      setShowPostModal(false);
+      setView('list');
       setNewJob({
         title: '',
         company: '',
@@ -2093,6 +2177,7 @@ function JobsTab({ jobs, onPost, onUpdate, isPosting, setNotification }: {
       ...editingJob,
       skills: typeof editingJob.skills === 'string' ? editingJob.skills.split(',').map(s => s.trim()) : editingJob.skills
     });
+    setView('list');
     setEditingJob(null);
   };
 
@@ -2108,60 +2193,541 @@ function JobsTab({ jobs, onPost, onUpdate, isPosting, setNotification }: {
     fetchApplications();
   }, [viewingApplications?.id]);
 
+  if (view === 'post') {
+    return (
+      <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+        <div className="flex items-center gap-4">
+          <button onClick={() => setView('list')} className="p-3 bg-white hover:bg-gray-50 rounded-2xl border border-gray-100 shadow-sm transition-all text-gray-400 hover:text-red-primary">
+            <ArrowLeft size={20} />
+          </button>
+          <div>
+            <h3 className="text-3xl font-display font-bold text-gray-900">Post New Opportunity</h3>
+            <p className="text-gray-500 text-sm">Share a new job or internship opportunity with the community.</p>
+          </div>
+        </div>
+
+        <div className="card p-8 md:p-16">
+          <div className="max-w-4xl mx-auto space-y-12">
+            <div>
+              <h3 className="text-2xl font-display font-bold text-red-primary mb-2">Opportunity Details</h3>
+              <p className="text-sm text-gray-500">Fill in the core information about the job position.</p>
+            </div>
+
+            <div className="grid md:grid-cols-2 gap-8">
+              <div className="md:col-span-2">
+                <label className="text-[10px] font-bold text-gray-400 uppercase block mb-2 tracking-widest">Job Title</label>
+                <input 
+                  type="text" 
+                  className="w-full bg-gray-50 border border-gray-200 rounded-xl p-4 text-sm outline-none focus:border-red-primary focus:bg-white transition-all" 
+                  placeholder="e.g. Software Engineer Intern"
+                  value={newJob.title}
+                  onChange={e => setNewJob({...newJob, title: e.target.value})}
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold text-gray-400 uppercase block mb-2 tracking-widest">Company Name</label>
+                <input 
+                  type="text" 
+                  className="w-full bg-gray-50 border border-gray-200 rounded-xl p-4 text-sm outline-none focus:border-red-primary focus:bg-white transition-all" 
+                  placeholder="e.g. Google"
+                  value={newJob.company}
+                  onChange={e => setNewJob({...newJob, company: e.target.value})}
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold text-gray-400 uppercase block mb-2 tracking-widest">Application Deadline</label>
+                <input 
+                  type="date" 
+                  className="w-full bg-gray-50 border border-gray-200 rounded-xl p-4 text-sm outline-none focus:border-red-primary focus:bg-white transition-all" 
+                  value={newJob.deadline}
+                  onChange={e => setNewJob({...newJob, deadline: e.target.value})}
+                />
+              </div>
+
+              <div className="md:col-span-2">
+                <label className="text-[10px] font-bold text-gray-400 uppercase block mb-2 tracking-widest">Company Logo</label>
+                <div className="flex flex-col sm:flex-row gap-4">
+                  {newJob.logo && (
+                    <div className="w-16 h-16 bg-white border border-gray-100 rounded-xl flex items-center justify-center p-2 shadow-sm">
+                      <img src={newJob.logo} alt="Logo Preview" className="w-full h-full object-contain" />
+                    </div>
+                  )}
+                  <div className="flex-1 flex gap-2">
+                    <input 
+                      type="text" 
+                      className="flex-1 bg-gray-50 border border-gray-200 rounded-xl p-4 text-sm outline-none focus:border-red-primary focus:bg-white transition-all" 
+                      placeholder="Paste URL or upload image..."
+                      value={newJob.logo}
+                      onChange={e => setNewJob({...newJob, logo: e.target.value})}
+                    />
+                    <input 
+                      type="file" 
+                      ref={logoInputRef}
+                      className="hidden" 
+                      accept="image/*"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          if (file.size > 1024 * 1024) {
+                            setNotification({ message: "Logo size should be less than 1MB", type: 'error' });
+                            return;
+                          }
+                          const reader = new FileReader();
+                          reader.onloadend = () => setNewJob({...newJob, logo: reader.result as string});
+                          reader.readAsDataURL(file);
+                        }
+                      }}
+                    />
+                    <button 
+                      type="button"
+                      onClick={() => logoInputRef.current?.click()}
+                      className="px-6 bg-gray-100 text-gray-700 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-gray-200 transition-all border border-gray-200"
+                    >
+                      <Upload size={18} /> Upload
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold text-gray-400 uppercase block mb-2 tracking-widest">Position Type</label>
+                <div className="flex h-[54px] items-center px-4 bg-gray-50 border border-gray-200 rounded-xl">
+                  <label className="flex items-center gap-3 cursor-pointer w-full group">
+                    <input 
+                      type="checkbox" 
+                      checked={newJob.isPaid} 
+                      onChange={e => setNewJob({...newJob, isPaid: e.target.checked})}
+                      className="w-5 h-5 accent-red-primary border-gray-300 rounded"
+                    />
+                    <span className="text-sm font-bold text-gray-700 group-hover:text-black transition-colors">Paid Position</span>
+                  </label>
+                </div>
+              </div>
+
+              {newJob.isPaid && (
+                <div className="animate-in fade-in slide-in-from-top-2 duration-300">
+                  <label className="text-[10px] font-bold text-gray-400 uppercase block mb-2 tracking-widest">Stipend / Salary</label>
+                  <input 
+                    type="text" 
+                    className="w-full bg-gray-50 border border-gray-200 rounded-xl p-4 text-sm outline-none focus:border-red-primary focus:bg-white transition-all" 
+                    placeholder="e.g. ₹25,000 / month"
+                    value={newJob.stipend}
+                    onChange={e => setNewJob({...newJob, stipend: e.target.value})}
+                  />
+                </div>
+              )}
+
+              <div className="md:col-span-2">
+                <label className="text-[10px] font-bold text-gray-400 uppercase block mb-2 tracking-widest">Required Skills (Optional, comma separated)</label>
+                <input 
+                  type="text" 
+                  className="w-full bg-gray-50 border border-gray-200 rounded-xl p-4 text-sm outline-none focus:border-red-primary focus:bg-white transition-all" 
+                  placeholder="React, TypeScript, Node.js, GraphQL..."
+                  value={newJob.skills}
+                  onChange={e => setNewJob({...newJob, skills: e.target.value})}
+                />
+              </div>
+
+              <div className="md:col-span-2">
+                <label className="text-[10px] font-bold text-gray-400 uppercase block mb-2 tracking-widest">Official Application Link</label>
+                <div className="relative">
+                  <ExternalLink className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                  <input 
+                    type="url" 
+                    className="w-full bg-gray-50 border border-gray-200 rounded-xl pl-12 pr-4 py-4 text-sm outline-none focus:border-red-primary focus:bg-white transition-all" 
+                    placeholder="https://company.com/careers/job-123"
+                    value={newJob.appLink}
+                    onChange={e => setNewJob({...newJob, appLink: e.target.value})}
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="pt-8 border-t border-gray-100">
+              <h3 className="text-xl font-display font-bold text-gray-900 mb-6 flex items-center gap-2">
+                <Shield size={20} className="text-red-primary" /> Targeting Filters
+              </h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                <FilterSelect label="Section" value={newJob.targetSection} onChange={v => setNewJob({...newJob, targetSection: v})} options={['All', 'A', 'B', 'C']} />
+                <FilterSelect label="Branch" value={newJob.targetBranch} onChange={v => setNewJob({...newJob, targetBranch: v})} options={['All', 'CSE', 'ECE', 'ME', 'CE']} />
+                <FilterSelect label="Year" value={newJob.targetYear} onChange={v => setNewJob({...newJob, targetYear: v})} options={['All', '1st', '2nd', '3rd', '4th']} />
+                <FilterSelect label="Persona" value={newJob.targetPersona} onChange={v => setNewJob({...newJob, targetPersona: v})} options={['All', 'Student', 'Volunteer', 'Coordinator']} />
+                <FilterSelect label="Institution" value={newJob.targetInstitution} onChange={v => setNewJob({...newJob, targetInstitution: v})} options={['All', ...UniGuildData.colleges]} />
+                <FilterSelect label="Coordinator" value={newJob.targetCoordinator} onChange={v => setNewJob({...newJob, targetCoordinator: v})} options={['All', 'Dr. Ramesh', 'Prof. Sunita']} />
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-4 pt-8">
+              <button 
+                onClick={() => setView('list')} 
+                className="px-8 py-4 rounded-xl font-bold text-gray-500 hover:text-gray-900 transition-all border border-gray-200 hover:bg-gray-50"
+              >
+                Discard
+              </button>
+              <button 
+                onClick={handlePost} 
+                className="px-12 py-4 rounded-xl bg-red-primary text-white font-bold hover:bg-red-700 transition-all shadow-lg shadow-red-500/20 flex items-center gap-3 disabled:opacity-50"
+                disabled={isPosting}
+              >
+                {isPosting ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <Briefcase size={20} />}
+                Publish Opportunity
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (view === 'edit' && editingJob) {
+    return (
+      <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+        <div className="flex items-center gap-4">
+          <button onClick={() => { setView('list'); setEditingJob(null); }} className="p-3 bg-white hover:bg-gray-50 rounded-2xl border border-gray-100 shadow-sm transition-all text-gray-400 hover:text-red-primary">
+            <ArrowLeft size={20} />
+          </button>
+          <div>
+            <h3 className="text-3xl font-display font-bold text-gray-900">Edit Opportunity</h3>
+            <p className="text-gray-500 text-sm">Update the details of this job or internship position.</p>
+          </div>
+        </div>
+
+        <div className="card p-8 md:p-16">
+          <div className="max-w-4xl mx-auto space-y-12">
+            <div>
+              <h3 className="text-2xl font-display font-bold text-red-primary mb-2">Update Opportunity</h3>
+              <p className="text-sm text-gray-500">Modify the core information for this position.</p>
+            </div>
+
+            <div className="grid md:grid-cols-2 gap-8">
+              <div className="md:col-span-2">
+                <label className="text-[10px] font-bold text-gray-400 uppercase block mb-2 tracking-widest">Job Title</label>
+                <input 
+                  type="text" 
+                  className="w-full bg-gray-50 border border-gray-200 rounded-xl p-4 text-sm outline-none focus:border-red-primary focus:bg-white transition-all" 
+                  value={editingJob.title}
+                  onChange={e => setEditingJob({...editingJob, title: e.target.value})}
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold text-gray-400 uppercase block mb-2 tracking-widest">Company Name</label>
+                <input 
+                  type="text" 
+                  className="w-full bg-gray-50 border border-gray-200 rounded-xl p-4 text-sm outline-none focus:border-red-primary focus:bg-white transition-all" 
+                  value={editingJob.company}
+                  onChange={e => setEditingJob({...editingJob, company: e.target.value})}
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold text-gray-400 uppercase block mb-2 tracking-widest">Application Deadline</label>
+                <input 
+                  type="date" 
+                  className="w-full bg-gray-50 border border-gray-200 rounded-xl p-4 text-sm outline-none focus:border-red-primary focus:bg-white transition-all" 
+                  value={editingJob.deadline}
+                  onChange={e => setEditingJob({...editingJob, deadline: e.target.value})}
+                />
+              </div>
+
+              <div className="md:col-span-2">
+                <label className="text-[10px] font-bold text-gray-400 uppercase block mb-2 tracking-widest">Company Logo</label>
+                <div className="flex flex-col sm:flex-row gap-4">
+                  {editingJob.logo && (
+                    <div className="w-16 h-16 bg-white border border-gray-100 rounded-xl flex items-center justify-center p-2 shadow-sm">
+                      <img src={editingJob.logo} alt="Logo Preview" className="w-full h-full object-contain" />
+                    </div>
+                  )}
+                  <div className="flex-1 flex gap-2">
+                    <input 
+                      type="text" 
+                      className="flex-1 bg-gray-50 border border-gray-200 rounded-xl p-4 text-sm outline-none focus:border-red-primary focus:bg-white transition-all" 
+                      placeholder="Paste URL or upload image..."
+                      value={editingJob.logo}
+                      onChange={e => setEditingJob({...editingJob, logo: e.target.value})}
+                    />
+                    <input 
+                      type="file" 
+                      ref={editLogoInputRef}
+                      className="hidden" 
+                      accept="image/*"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          if (file.size > 1024 * 1024) {
+                            setNotification({ message: "Logo size should be less than 1MB", type: 'error' });
+                            return;
+                          }
+                          const reader = new FileReader();
+                          reader.onloadend = () => setEditingJob({...editingJob, logo: reader.result as string});
+                          reader.readAsDataURL(file);
+                        }
+                      }}
+                    />
+                    <button 
+                      type="button"
+                      onClick={() => editLogoInputRef.current?.click()}
+                      className="px-6 bg-gray-100 text-gray-700 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-gray-200 transition-all border border-gray-200"
+                    >
+                      <Upload size={18} /> Upload
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold text-gray-400 uppercase block mb-2 tracking-widest">Position Type</label>
+                <div className="flex h-[54px] items-center px-4 bg-gray-50 border border-gray-200 rounded-xl">
+                  <label className="flex items-center gap-3 cursor-pointer w-full group">
+                    <input 
+                      type="checkbox" 
+                      checked={editingJob.isPaid} 
+                      onChange={e => setEditingJob({...editingJob, isPaid: e.target.checked})}
+                      className="w-5 h-5 accent-red-primary border-gray-300 rounded"
+                    />
+                    <span className="text-sm font-bold text-gray-700 group-hover:text-black transition-colors">Paid Position</span>
+                  </label>
+                </div>
+              </div>
+
+              {editingJob.isPaid && (
+                <div className="animate-in fade-in slide-in-from-top-2 duration-300">
+                  <label className="text-[10px] font-bold text-gray-400 uppercase block mb-2 tracking-widest">Stipend / Salary</label>
+                  <input 
+                    type="text" 
+                    className="w-full bg-gray-50 border border-gray-200 rounded-xl p-4 text-sm outline-none focus:border-red-primary focus:bg-white transition-all" 
+                    value={editingJob.stipend}
+                    onChange={e => setEditingJob({...editingJob, stipend: e.target.value})}
+                  />
+                </div>
+              )}
+
+              <div className="md:col-span-2">
+                <label className="text-[10px] font-bold text-gray-400 uppercase block mb-2 tracking-widest">Required Skills</label>
+                <input 
+                  type="text" 
+                  className="w-full bg-gray-50 border border-gray-200 rounded-xl p-4 text-sm outline-none focus:border-red-primary focus:bg-white transition-all" 
+                  value={editingJob.skills}
+                  onChange={e => setEditingJob({...editingJob, skills: e.target.value})}
+                />
+              </div>
+
+              <div className="md:col-span-2">
+                <label className="text-[10px] font-bold text-gray-400 uppercase block mb-2 tracking-widest">Official Application Link</label>
+                <div className="relative">
+                  <ExternalLink className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                  <input 
+                    type="url" 
+                    className="w-full bg-gray-50 border border-gray-200 rounded-xl pl-12 pr-4 py-4 text-sm outline-none focus:border-red-primary focus:bg-white transition-all" 
+                    placeholder="https://company.com/careers/job-123"
+                    value={editingJob.appLink}
+                    onChange={e => setEditingJob({...editingJob, appLink: e.target.value})}
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="pt-8 border-t border-gray-100">
+              <h3 className="text-xl font-display font-bold text-gray-900 mb-6 flex items-center gap-2">
+                <Shield size={20} className="text-red-primary" /> Targeting Filters
+              </h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                <FilterSelect label="Section" value={editingJob.targetSection} onChange={v => setEditingJob({...editingJob, targetSection: v})} options={['All', 'A', 'B', 'C']} />
+                <FilterSelect label="Branch" value={editingJob.targetBranch} onChange={v => setEditingJob({...editingJob, targetBranch: v})} options={['All', 'CSE', 'ECE', 'ME', 'CE']} />
+                <FilterSelect label="Year" value={editingJob.targetYear} onChange={v => setEditingJob({...editingJob, targetYear: v})} options={['All', '1st', '2nd', '3rd', '4th']} />
+                <FilterSelect label="Persona" value={editingJob.targetPersona} onChange={v => setEditingJob({...editingJob, targetPersona: v})} options={['All', 'Student', 'Volunteer', 'Coordinator']} />
+                <FilterSelect label="Institution" value={editingJob.targetInstitution} onChange={v => setEditingJob({...editingJob, targetInstitution: v})} options={['All', ...UniGuildData.colleges]} />
+                <FilterSelect label="Coordinator" value={editingJob.targetCoordinator} onChange={v => setEditingJob({...editingJob, targetCoordinator: v})} options={['All', 'Dr. Ramesh', 'Prof. Sunita']} />
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-4 pt-8">
+              <button 
+                onClick={() => { setView('list'); setEditingJob(null); }} 
+                className="px-8 py-4 rounded-xl font-bold text-gray-500 hover:text-gray-900 transition-all border border-gray-200 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={handleUpdate} 
+                className="px-12 py-4 rounded-xl bg-gray-900 text-white font-bold hover:bg-black transition-all shadow-lg shadow-black/20 flex items-center gap-3"
+              >
+                <Download size={20} />
+                Save Changes
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (view === 'applications' && viewingApplications) {
+    return (
+      <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+        <div className="flex items-center gap-4">
+          <button onClick={() => { setView('list'); setViewingApplications(null); }} className="p-3 bg-white hover:bg-gray-50 rounded-2xl border border-gray-100 shadow-sm transition-all text-gray-400 hover:text-red-primary">
+            <ArrowLeft size={20} />
+          </button>
+          <div>
+            <h3 className="text-3xl font-display font-bold text-gray-900 leading-tight">Applications for <span className="text-red-primary">{viewingApplications.title}</span></h3>
+            <p className="text-gray-500 text-sm font-medium">{viewingApplications.company} • {applications.length} Candidates</p>
+          </div>
+        </div>
+
+        <div className="card p-8 md:p-12">
+          <div className="flex justify-between items-center mb-10 pb-6 border-b border-gray-50">
+            <div>
+              <h3 className="text-2xl font-display font-bold text-gray-900 mb-2">Candidate List</h3>
+              <p className="text-sm text-gray-500">Review and manage candidate applications for this position.</p>
+            </div>
+            <button className="flex items-center gap-2 px-5 py-2.5 bg-gray-900 text-white rounded-xl text-xs font-bold hover:bg-black transition-all shadow-sm">
+              <Download size={14} /> Export CSV
+            </button>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="text-left border-b border-gray-50">
+                  <th className="px-4 py-4 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Candidate</th>
+                  <th className="px-4 py-4 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Applied On</th>
+                  <th className="px-4 py-4 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Status</th>
+                  <th className="px-4 py-4 text-[10px] font-bold text-gray-400 uppercase tracking-widest text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {applications.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="py-20 text-center">
+                      <div className="flex flex-col items-center opacity-20">
+                        <Users size={64} className="mb-4" />
+                        <p className="text-lg font-display font-bold">No Applications Yet</p>
+                      </div>
+                    </td>
+                  </tr>
+                ) : (
+                  applications.map((app) => (
+                    <tr key={app.id} className="group hover:bg-gray-50/50 transition-colors">
+                      <td className="px-4 py-6">
+                        <div className="flex flex-col">
+                          <span className="font-bold text-gray-900">{app.student_name || 'Anonymous Student'}</span>
+                          <span className="text-xs text-gray-400">{app.student_email || 'no-email@uniguild.com'}</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-6">
+                        <span className="text-sm font-medium text-gray-600">
+                          {app.applied_at ? new Date(app.applied_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : 'Recent'}
+                        </span>
+                      </td>
+                      <td className="px-4 py-6">
+                        <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                          app.status === 'shortlisted' ? 'bg-green-50 text-green-600' : 
+                          app.status === 'rejected' ? 'bg-red-50 text-red-600' : 'bg-blue-50 text-blue-600'
+                        }`}>
+                          {app.status || 'applied'}
+                        </span>
+                      </td>
+                      <td className="px-4 py-6 text-right">
+                        <button className="p-2.5 bg-white border border-gray-200 rounded-xl text-gray-400 hover:text-red-primary hover:border-red-primary/30 transition-all hover:shadow-sm">
+                          <ExternalLink size={16} />
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h3 className="text-2xl font-display font-bold">Job Board Management</h3>
+    <div className="space-y-8 animate-in fade-in duration-500">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+        <div>
+          <h3 className="text-3xl font-display font-bold text-gray-900">Job Board Management</h3>
+          <p className="text-gray-500 text-sm mt-1">Manage professional opportunities and review student applications.</p>
+        </div>
         <button 
-          onClick={() => setShowPostModal(true)}
-          className="btn-primary flex items-center gap-2"
+          onClick={() => setView('post')}
+          className="w-full md:w-auto px-8 py-4 bg-red-primary text-white rounded-2xl font-bold flex items-center justify-center gap-3 hover:bg-red-700 transition-all shadow-lg shadow-red-500/20 active:scale-95"
         >
-          <Briefcase size={18} /> Post Job
+          <Briefcase size={20} /> Post New Job
         </button>
       </div>
 
-      <div className="grid lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {jobs.length === 0 ? (
-          <div className="col-span-full text-center py-12 text-gray-400 card">No jobs posted yet.</div>
+          <div className="col-span-full py-24 flex flex-col items-center justify-center card text-gray-400">
+            <div className="p-6 bg-gray-50 rounded-full mb-6">
+              <Briefcase size={40} className="opacity-20" />
+            </div>
+            <p className="text-lg font-display font-bold">No jobs posted yet</p>
+            <p className="text-sm">Click the button above to post your first opportunity.</p>
+          </div>
         ) : (
           jobs.map(job => (
-            <div key={job.id} className="card p-6">
-              <div className="flex justify-between items-start mb-4">
+            <div key={job.id} className="card p-6 flex flex-col group hover:shadow-xl hover:-translate-y-1 transition-all duration-300">
+              <div className="flex justify-between items-start mb-6">
                 <div className="flex items-center gap-4">
                   {job.logo ? (
-                    <div className="w-12 h-12 bg-white border border-gray-100 rounded-lg flex items-center justify-center p-1">
+                    <div className="w-14 h-14 bg-white border border-gray-100 rounded-2xl flex items-center justify-center p-2 shadow-sm group-hover:scale-105 transition-transform">
                       <img src={job.logo} alt={job.company} className="w-full h-full object-contain" referrerPolicy="no-referrer" />
                     </div>
                   ) : (
-                    <div className="w-12 h-12 bg-gray-50 text-gray-400 border border-gray-100 rounded-lg flex items-center justify-center font-display font-bold text-xl">
+                    <div className="w-14 h-14 bg-red-50 text-red-primary border border-red-primary/10 rounded-2xl flex items-center justify-center font-display font-bold text-2xl">
                       {job.company?.charAt(0) || 'J'}
                     </div>
                   )}
                   <div>
-                    <h4 className="font-bold">{job.title}</h4>
-                    <p className="text-xs text-red-primary font-bold">{job.company}</p>
+                    <h4 className="font-bold text-gray-900 group-hover:text-red-primary transition-colors">{job.title}</h4>
+                    <p className="text-xs font-bold text-red-primary tracking-wide uppercase italic">{job.company}</p>
                   </div>
                 </div>
                 <div className="text-right">
-                  <p className="text-[10px] font-bold text-gray-400 uppercase">Applications</p>
-                  <p className="text-lg font-mono font-bold">{job.applicationsCount || 0}</p>
+                  <div className="bg-gray-50 px-3 py-1.5 rounded-xl border border-gray-100">
+                    <p className="text-[10px] font-bold text-gray-400 uppercase leading-none mb-1">Apps</p>
+                    <p className="text-sm font-mono font-bold text-gray-900">{job.applicationsCount || 0}</p>
+                  </div>
                 </div>
               </div>
-              <div className="flex gap-4 mb-6">
-                <div className="bg-gray-50 px-3 py-1.5 rounded text-[10px] font-bold uppercase text-gray-500">{job.type}</div>
-                <div className="bg-gray-50 px-3 py-1.5 rounded text-[10px] font-bold uppercase text-gray-500">{job.domain}</div>
-                <div className="bg-gray-50 px-3 py-1.5 rounded text-[10px] font-bold uppercase text-gray-500">{job.stipend || 'Unpaid'}</div>
+
+              <div className="flex flex-wrap gap-2 mb-8 mt-auto">
+                <div className="bg-gray-900 text-white px-3 py-1 rounded-lg text-[9px] font-bold uppercase tracking-wider">{job.type}</div>
+                <div className="bg-gray-100 text-gray-600 px-3 py-1 rounded-lg text-[9px] font-bold uppercase tracking-wider">{job.domain}</div>
+                <div className="bg-red-50 text-red-primary px-3 py-1 rounded-lg text-[9px] font-bold uppercase tracking-wider border border-red-primary/5">{job.stipend || 'Unpaid'}</div>
               </div>
-              <div className="flex gap-2">
+
+              <div className="flex gap-2 pt-4 border-t border-gray-50">
                 <button 
-                  onClick={() => setViewingApplications(job)}
-                  className="btn-primary flex-1 py-2 text-xs"
+                  onClick={() => {
+                    setViewingApplications(job);
+                    setView('applications');
+                  }}
+                  className="flex-1 py-3 px-4 rounded-xl bg-red-primary text-white font-bold text-xs hover:bg-red-700 transition-all flex items-center justify-center gap-2 shadow-lg shadow-red-500/10"
                 >
-                  View Applications
+                  Applicants <Users size={14} />
                 </button>
+                {job.appLink && (
+                  <button 
+                    onClick={() => window.open(job.appLink, '_blank')}
+                    className="py-3 px-4 rounded-xl border border-gray-200 text-gray-400 hover:text-red-primary hover:border-red-primary/30 transition-all hover:bg-red-50"
+                    title="View Original Posting"
+                  >
+                    <ExternalLink size={16} />
+                  </button>
+                )}
                 <button 
-                  onClick={() => setEditingJob({...job, skills: Array.isArray(job.skills) ? job.skills.join(', ') : job.skills})}
-                  className="btn-secondary py-2 px-4 text-xs"
+                  onClick={() => {
+                    setEditingJob({...job, skills: Array.isArray(job.skills) ? job.skills.join(', ') : job.skills});
+                    setView('edit');
+                  }}
+                  className="py-3 px-6 rounded-xl border border-gray-200 text-gray-500 font-bold text-xs hover:bg-gray-50 hover:text-black transition-all"
                 >
                   Edit
                 </button>
@@ -2170,345 +2736,6 @@ function JobsTab({ jobs, onPost, onUpdate, isPosting, setNotification }: {
           ))
         )}
       </div>
-
-      {/* Post Job Modal */}
-      <AnimatePresence>
-        {showPostModal && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setShowPostModal(false)}
-              className="absolute inset-0 bg-gray-900/60 backdrop-blur-sm"
-            />
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="relative w-full max-w-2xl bg-white rounded-2xl shadow-2xl overflow-hidden"
-            >
-              <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-red-primary text-white">
-                <h3 className="text-xl font-display font-bold">Post New Opportunity</h3>
-                <button onClick={() => setShowPostModal(false)} className="p-1 hover:bg-white/20 rounded-full transition-all">
-                  <X size={24} />
-                </button>
-              </div>
-              
-              <div className="p-8 max-h-[70vh] overflow-y-auto space-y-6">
-                <div className="grid md:grid-cols-2 gap-6">
-                  <div className="md:col-span-2">
-                    <label className="text-[10px] font-bold text-gray-400 uppercase block mb-2">Job Title</label>
-                    <input 
-                      type="text" 
-                      className="w-full bg-gray-50 border border-gray-200 rounded-lg p-3 text-sm outline-none focus:border-red-primary" 
-                      placeholder="e.g. Software Engineer Intern"
-                      value={newJob.title}
-                      onChange={e => setNewJob({...newJob, title: e.target.value})}
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-gray-400 uppercase block mb-2">Application Deadline</label>
-                    <input 
-                      type="date" 
-                      className="w-full bg-gray-50 border border-gray-200 rounded-lg p-3 text-sm outline-none focus:border-red-primary" 
-                      value={newJob.deadline}
-                      onChange={e => setNewJob({...newJob, deadline: e.target.value})}
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-gray-400 uppercase block mb-2">Company Name</label>
-                    <input 
-                      type="text" 
-                      className="w-full bg-gray-50 border border-gray-200 rounded-lg p-3 text-sm outline-none focus:border-red-primary" 
-                      placeholder="e.g. Google"
-                      value={newJob.company}
-                      onChange={e => setNewJob({...newJob, company: e.target.value})}
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-gray-400 uppercase block mb-2">Company Logo URL</label>
-                    <input 
-                      type="text" 
-                      className="w-full bg-gray-50 border border-gray-200 rounded-lg p-3 text-sm outline-none focus:border-red-primary" 
-                      placeholder="https://logo.url/logo.png"
-                      value={newJob.logo}
-                      onChange={e => setNewJob({...newJob, logo: e.target.value})}
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-gray-400 uppercase block mb-2">Job Type</label>
-                    <div className="flex items-center gap-4 h-11">
-                      <label className="flex items-center gap-2 cursor-pointer">
-                        <input 
-                          type="checkbox" 
-                          checked={newJob.isPaid} 
-                          onChange={e => setNewJob({...newJob, isPaid: e.target.checked})}
-                          className="w-4 h-4 accent-red-primary"
-                        />
-                        <span className="text-sm font-bold">Paid Position</span>
-                      </label>
-                    </div>
-                  </div>
-                  {newJob.isPaid && (
-                    <div>
-                      <label className="text-[10px] font-bold text-gray-400 uppercase block mb-2">Stipend / Salary</label>
-                      <input 
-                        type="text" 
-                        className="w-full bg-gray-50 border border-gray-200 rounded-lg p-3 text-sm outline-none focus:border-red-primary" 
-                        placeholder="e.g. ₹25,000 / month"
-                        value={newJob.stipend}
-                        onChange={e => setNewJob({...newJob, stipend: e.target.value})}
-                      />
-                    </div>
-                  )}
-                  <div className="md:col-span-2">
-                    <label className="text-[10px] font-bold text-gray-400 uppercase block mb-2">Required Skills (Comma separated)</label>
-                    <input 
-                      type="text" 
-                      className="w-full bg-gray-50 border border-gray-200 rounded-lg p-3 text-sm outline-none focus:border-red-primary" 
-                      placeholder="React, TypeScript, Node.js..."
-                      value={newJob.skills}
-                      onChange={e => setNewJob({...newJob, skills: e.target.value})}
-                    />
-                  </div>
-                  <div className="md:col-span-2">
-                    <label className="text-[10px] font-bold text-gray-400 uppercase block mb-2">Official Application Link</label>
-                    <div className="relative">
-                      <ExternalLink className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
-                      <input 
-                        type="url" 
-                        className="w-full bg-gray-50 border border-gray-200 rounded-lg pl-10 pr-4 py-3 text-sm outline-none focus:border-red-primary" 
-                        placeholder="https://company.com/careers/job-123"
-                        value={newJob.appLink}
-                        onChange={e => setNewJob({...newJob, appLink: e.target.value})}
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                <div className="space-y-4 pt-4 border-t border-gray-100">
-                  <h4 className="text-xs font-bold uppercase text-red-primary tracking-widest">Targeting Filters</h4>
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                    <FilterSelect label="Section" value={newJob.targetSection} onChange={v => setNewJob({...newJob, targetSection: v})} options={['All', 'A', 'B', 'C']} />
-                    <FilterSelect label="Branch" value={newJob.targetBranch} onChange={v => setNewJob({...newJob, targetBranch: v})} options={['All', 'CSE', 'ECE', 'ME', 'CE']} />
-                    <FilterSelect label="Year" value={newJob.targetYear} onChange={v => setNewJob({...newJob, targetYear: v})} options={['All', '1st', '2nd', '3rd', '4th']} />
-                    <FilterSelect label="Persona" value={newJob.targetPersona} onChange={v => setNewJob({...newJob, targetPersona: v})} options={['All', 'Student', 'Volunteer', 'Coordinator']} />
-                    <FilterSelect label="Institution" value={newJob.targetInstitution} onChange={v => setNewJob({...newJob, targetInstitution: v})} options={['All', ...UniGuildData.colleges]} />
-                    <FilterSelect label="Coordinator" value={newJob.targetCoordinator} onChange={v => setNewJob({...newJob, targetCoordinator: v})} options={['All', 'Dr. Ramesh', 'Prof. Sunita']} />
-                  </div>
-                </div>
-              </div>
-
-              <div className="p-6 bg-gray-50 border-t border-gray-100 flex justify-end gap-3">
-                <button onClick={() => setShowPostModal(false)} className="btn-secondary px-6">Cancel</button>
-                    <button 
-                      onClick={handlePost} 
-                      disabled={isPosting}
-                      className="btn-primary w-full py-3 flex items-center justify-center gap-2"
-                    >
-                      {isPosting ? (
-                        <>
-                          <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                          Posting...
-                        </>
-                      ) : (
-                        'Post Opportunity'
-                      )}
-                    </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* Edit Job Modal */}
-      <AnimatePresence>
-        {editingJob && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setEditingJob(null)}
-              className="absolute inset-0 bg-gray-900/60 backdrop-blur-sm"
-            />
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="relative w-full max-w-2xl bg-white rounded-2xl shadow-2xl overflow-hidden"
-            >
-              <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-red-primary text-white">
-                <h3 className="text-xl font-display font-bold">Edit Opportunity</h3>
-                <button onClick={() => setEditingJob(null)} className="p-1 hover:bg-white/20 rounded-full transition-all">
-                  <X size={24} />
-                </button>
-              </div>
-              
-              <div className="p-8 max-h-[70vh] overflow-y-auto space-y-6">
-                <div className="grid md:grid-cols-2 gap-6">
-                  <div className="md:col-span-2">
-                    <label className="text-[10px] font-bold text-gray-400 uppercase block mb-2">Job Title</label>
-                    <input 
-                      type="text" 
-                      className="w-full bg-gray-50 border border-gray-200 rounded-lg p-3 text-sm outline-none focus:border-red-primary" 
-                      value={editingJob.title}
-                      onChange={e => setEditingJob({...editingJob, title: e.target.value})}
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-gray-400 uppercase block mb-2">Application Deadline</label>
-                    <input 
-                      type="date" 
-                      className="w-full bg-gray-50 border border-gray-200 rounded-lg p-3 text-sm outline-none focus:border-red-primary" 
-                      value={editingJob.deadline}
-                      onChange={e => setEditingJob({...editingJob, deadline: e.target.value})}
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-gray-400 uppercase block mb-2">Company Name</label>
-                    <input 
-                      type="text" 
-                      className="w-full bg-gray-50 border border-gray-200 rounded-lg p-3 text-sm outline-none focus:border-red-primary" 
-                      value={editingJob.company}
-                      onChange={e => setEditingJob({...editingJob, company: e.target.value})}
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-gray-400 uppercase block mb-2">Company Logo URL</label>
-                    <input 
-                      type="text" 
-                      className="w-full bg-gray-50 border border-gray-200 rounded-lg p-3 text-sm outline-none focus:border-red-primary" 
-                      value={editingJob.logo}
-                      onChange={e => setEditingJob({...editingJob, logo: e.target.value})}
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-gray-400 uppercase block mb-2">Job Type</label>
-                    <div className="flex items-center gap-4 h-11">
-                      <label className="flex items-center gap-2 cursor-pointer">
-                        <input 
-                          type="checkbox" 
-                          checked={editingJob.isPaid} 
-                          onChange={e => setEditingJob({...editingJob, isPaid: e.target.checked})}
-                          className="w-4 h-4 accent-red-primary"
-                        />
-                        <span className="text-sm font-bold">Paid Position</span>
-                      </label>
-                    </div>
-                  </div>
-                  {editingJob.isPaid && (
-                    <div>
-                      <label className="text-[10px] font-bold text-gray-400 uppercase block mb-2">Stipend / Salary</label>
-                      <input 
-                        type="text" 
-                        className="w-full bg-gray-50 border border-gray-200 rounded-lg p-3 text-sm outline-none focus:border-red-primary" 
-                        value={editingJob.stipend}
-                        onChange={e => setEditingJob({...editingJob, stipend: e.target.value})}
-                      />
-                    </div>
-                  )}
-                  <div className="md:col-span-2">
-                    <label className="text-[10px] font-bold text-gray-400 uppercase block mb-2">Required Skills (Comma separated)</label>
-                    <input 
-                      type="text" 
-                      className="w-full bg-gray-50 border border-gray-200 rounded-lg p-3 text-sm outline-none focus:border-red-primary" 
-                      value={editingJob.skills}
-                      onChange={e => setEditingJob({...editingJob, skills: e.target.value})}
-                    />
-                  </div>
-                  <div className="md:col-span-2">
-                    <label className="text-[10px] font-bold text-gray-400 uppercase block mb-2">Official Application Link</label>
-                    <div className="relative">
-                      <ExternalLink className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
-                      <input 
-                        type="url" 
-                        className="w-full bg-gray-50 border border-gray-200 rounded-lg pl-10 pr-4 py-3 text-sm outline-none focus:border-red-primary" 
-                        value={editingJob.appLink}
-                        onChange={e => setEditingJob({...editingJob, appLink: e.target.value})}
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                <div className="space-y-4 pt-4 border-t border-gray-100">
-                  <h4 className="text-xs font-bold uppercase text-red-primary tracking-widest">Targeting Filters</h4>
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                    <FilterSelect label="Section" value={editingJob.targetSection} onChange={v => setEditingJob({...editingJob, targetSection: v})} options={['All', 'A', 'B', 'C']} />
-                    <FilterSelect label="Branch" value={editingJob.targetBranch} onChange={v => setEditingJob({...editingJob, targetBranch: v})} options={['All', 'CSE', 'ECE', 'ME', 'CE']} />
-                    <FilterSelect label="Year" value={editingJob.targetYear} onChange={v => setEditingJob({...editingJob, targetYear: v})} options={['All', '1st', '2nd', '3rd', '4th']} />
-                    <FilterSelect label="Persona" value={editingJob.targetPersona} onChange={v => setEditingJob({...editingJob, targetPersona: v})} options={['All', 'Student', 'Volunteer', 'Coordinator']} />
-                    <FilterSelect label="Institution" value={editingJob.targetInstitution} onChange={v => setEditingJob({...editingJob, targetInstitution: v})} options={['All', ...UniGuildData.colleges]} />
-                    <FilterSelect label="Coordinator" value={editingJob.targetCoordinator} onChange={v => setEditingJob({...editingJob, targetCoordinator: v})} options={['All', 'Dr. Ramesh', 'Prof. Sunita']} />
-                  </div>
-                </div>
-              </div>
-
-              <div className="p-6 bg-gray-50 border-t border-gray-100 flex justify-end gap-3">
-                <button onClick={() => setEditingJob(null)} className="btn-secondary px-6">Cancel</button>
-                <button onClick={handleUpdate} className="btn-primary px-10">Update Job</button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* View Applications Modal */}
-      <AnimatePresence>
-        {viewingApplications && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setViewingApplications(null)}
-              className="absolute inset-0 bg-gray-900/60 backdrop-blur-sm"
-            />
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="relative w-full max-w-3xl bg-white rounded-2xl shadow-2xl overflow-hidden"
-            >
-              <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-red-primary text-white">
-                <div>
-                  <h3 className="text-xl font-display font-bold">Applications for {viewingApplications.title}</h3>
-                  <p className="text-xs opacity-80">{viewingApplications.company}</p>
-                </div>
-                <button onClick={() => setViewingApplications(null)} className="p-1 hover:bg-white/20 rounded-full transition-all">
-                  <X size={24} />
-                </button>
-              </div>
-              
-              <div className="p-6 max-h-[70vh] overflow-y-auto">
-                <div className="space-y-4">
-                  {applications.length === 0 ? (
-                    <div className="text-center py-12 text-gray-400">
-                      <Users size={48} className="mx-auto mb-4 opacity-20" />
-                      <p>No applications received yet for this position.</p>
-                    </div>
-                  ) : (
-                    applications.map((app) => (
-                      <div key={app.id} className="p-4 border border-gray-100 rounded-xl flex items-center justify-between">
-                        <div>
-                          <p className="font-bold text-sm">{app.student_name || 'Student'}</p>
-                          <p className="text-xs text-gray-500">{app.student_email || 'No email'} • {app.applied_at ? new Date(app.applied_at).toLocaleString() : 'Recently'}</p>
-                        </div>
-                        <span className="text-[10px] bg-gray-100 text-gray-600 px-2 py-1 rounded font-bold uppercase">{app.status || 'applied'}</span>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-
-              <div className="p-6 bg-gray-50 border-t border-gray-100 flex justify-end">
-                <button onClick={() => setViewingApplications(null)} className="btn-secondary px-6">Close</button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
     </div>
   );
 }

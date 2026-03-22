@@ -85,7 +85,9 @@ CREATE TABLE IF NOT EXISTS events (
     created_by UUID,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
-    status TEXT DEFAULT 'Upcoming'
+    status TEXT DEFAULT 'Upcoming',
+    certificate_template TEXT,
+    certificate_coords JSONB DEFAULT '{"x": 50, "y": 45}'
 );
 
 -- 3. JOBS TABLE

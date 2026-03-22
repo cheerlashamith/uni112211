@@ -24,6 +24,7 @@ const sidebarItems = [
   { id: 'tasks', label: 'Tasks', icon: <CheckSquare size={20} /> },
   { id: 'team', label: 'My Team', icon: <Users size={20} /> },
   { id: 'announcements', label: 'Announcements', icon: <Megaphone size={20} /> },
+  { id: 'notifications', label: 'Notifications', icon: <Bell size={20} /> },
   { id: 'analytics', label: 'Analytics', icon: <BarChart3 size={20} /> },
   { id: 'profile', label: 'Profile', icon: <User size={20} /> },
 ];
@@ -48,6 +49,7 @@ export default function EventCoordinatorDashboard() {
   const [confirmModal, setConfirmModal] = useState<{ isOpen: boolean, title: string, message: string, onConfirm: () => void } | null>(null);
   const [coordinatorProfile, setCoordinatorProfile] = useState<any>(null);
   const [myEvents, setMyEvents] = useState<any[]>([]);
+  const [selectedEvent, setSelectedEvent] = useState<any>(null);
   const [assignedEventIds, setAssignedEventIds] = useState<string[]>([]);
   const [volunteers, setVolunteers] = useState<any[]>([]);
   const [jobs, setJobs] = useState<any[]>([]);
@@ -79,9 +81,13 @@ export default function EventCoordinatorDashboard() {
       // Get coordinator's created events
       const { data: createdEvents } = await supabase.from('events').select('id').eq('created_by', currentUser.uid);
       const createdEventIds = (createdEvents || []).map((e: any) => e.id);
+
+      // Get events assigned via coordinator_id
+      const { data: assignedViaCol } = await supabase.from('events').select('id').eq('coordinator_id', currentUser.uid);
+      const assignedIdsViaColumn = (assignedViaCol || []).map((e: any) => e.id);
       
       // Combine all event IDs
-      const allAssignedIds = [...new Set([...eventIdsFromTasks, ...eventIdsAsVolunteer, ...createdEventIds])];
+      const allAssignedIds = [...new Set([...eventIdsFromTasks, ...eventIdsAsVolunteer, ...createdEventIds, ...assignedIdsViaColumn])];
       setAssignedEventIds(allAssignedIds);
 
       if (allAssignedIds.length > 0) {
@@ -165,13 +171,23 @@ export default function EventCoordinatorDashboard() {
   const renderTabContent = () => {
     switch (activeTab) {
       case 'overview': return <OverviewTab coordinator={coordinatorProfile} events={myEvents} assignedEventIds={assignedEventIds} setActiveTab={setActiveTab} onScanClick={() => setActiveTab('attendance')} />;
-      case 'events': return <EventsTab events={myEvents} setActiveTab={setActiveTab} />;
+      case 'events': 
+        return selectedEvent ? (
+          <EventManageView 
+            event={selectedEvent} 
+            onBack={() => setSelectedEvent(null)} 
+            setNotification={setNotification}
+          />
+        ) : (
+          <EventsTab events={myEvents} onSelect={setSelectedEvent} setActiveTab={setActiveTab} />
+        );
       case 'attendance': return <AttendanceTab coordinatorId={coordinatorProfile?.id || coordinatorProfile?.uid} coordinatorName={coordinatorProfile?.name} assignedEventIds={assignedEventIds} myEvents={myEvents} />;
       case 'certificates': return <CertificatesTab setNotification={setNotification} setConfirmModal={setConfirmModal} assignedEventIds={assignedEventIds} myEvents={myEvents} />;
       case 'volunteers': return <VolunteersTab volunteers={volunteers} events={myEvents} setNotification={setNotification} assignedEventIds={assignedEventIds} />;
       case 'tasks': return <TasksTab coordinatorId={coordinatorProfile?.id || coordinatorProfile?.uid} events={myEvents} setNotification={setNotification} assignedEventIds={assignedEventIds} />;
       case 'team': return <TeamTab events={myEvents} setNotification={setNotification} setConfirmModal={setConfirmModal} />;
       case 'announcements': return <AnnouncementsTab events={myEvents} setNotification={setNotification} currentUser={currentUser} />;
+      case 'notifications': return <NotificationsTab coordinatorId={coordinatorProfile?.uid} setNotification={setNotification} />;
       case 'analytics': return <AnalyticsTab events={myEvents} />;
       case 'profile': return <ProfileTab coordinator={coordinatorProfile} onSave={handleSaveProfile} />;
       default: return <OverviewTab coordinator={coordinatorProfile} events={myEvents} assignedEventIds={assignedEventIds} setActiveTab={setActiveTab} onScanClick={() => setActiveTab('attendance')} />;
@@ -257,7 +273,7 @@ export default function EventCoordinatorDashboard() {
 }
 
 // --- EVENTS TAB ---
-function EventsTab({ events, setActiveTab }: { events: any[], setActiveTab: (tab: string) => void }) {
+function EventsTab({ events, onSelect, setActiveTab }: { events: any[], onSelect: (event: any) => void, setActiveTab: (tab: string) => void }) {
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
@@ -307,11 +323,310 @@ function EventsTab({ events, setActiveTab }: { events: any[], setActiveTab: (tab
                   <Users size={14} className="text-gray-400" />
                   <span className="text-xs font-bold">{event.registrationsCount || 0} Registered</span>
                 </div>
-                <button onClick={() => setActiveTab('attendance')} className="text-red-primary text-xs font-bold hover:underline">Manage</button>
+                <button onClick={() => onSelect(event)} className="text-red-primary text-xs font-bold hover:underline">Manage</button>
               </div>
             </div>
           ))
         )}
+      </div>
+    </div>
+  );
+}
+
+// --- EVENT MANAGE VIEW ---
+function EventManageView({ event, onBack, setNotification }: { 
+  event: any, 
+  onBack: () => void, 
+  setNotification: (n: any) => void 
+}) {
+  const [registrations, setRegistrations] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [deptFilter, setDeptFilter] = useState('All');
+  const [yearFilter, setYearFilter] = useState('All');
+  const [statusFilter, setStatusFilter] = useState('All');
+
+  useEffect(() => {
+    const fetchRegistrations = async () => {
+      setLoading(true);
+      try {
+        // Fetch registrations first
+        const { data: regs, error: regError } = await supabase
+          .from('registrations')
+          .select('*')
+          .eq('event_id', event.id);
+
+        if (regError) throw regError;
+
+        if (regs && regs.length > 0) {
+          // Then fetch student details for all registered students
+          const studentIds = [...new Set(regs.map(r => r.student_id).filter(Boolean))];
+          const { data: studentData, error: studentError } = await supabase
+            .from('users')
+            .select('uid, department, year, email')
+            .in('uid', studentIds);
+
+          if (studentError) throw studentError;
+
+          // Merge student details into registrations
+          const merged = regs.map(reg => ({
+            ...reg,
+            student: studentData?.find(s => s.uid === reg.student_id) || null
+          }));
+          setRegistrations(merged);
+        } else {
+          setRegistrations([]);
+        }
+      } catch (err: any) {
+        setNotification({ message: `Failed to fetch registrations: ${err.message}`, type: 'error' });
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchRegistrations();
+  }, [event.id]);
+
+  const filteredRegistrations = registrations.filter(reg => {
+    const matchesSearch = 
+      reg.student_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      reg.student?.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      reg.unique_id?.includes(searchQuery);
+    
+    const matchesDept = deptFilter === 'All' || reg.student?.department === deptFilter;
+    const matchesYear = yearFilter === 'All' || reg.student?.year === yearFilter;
+    const matchesStatus = statusFilter === 'All' || 
+      (statusFilter === 'Attended' && reg.attended) || 
+      (statusFilter === 'Absent' && !reg.attended);
+
+    return matchesSearch && matchesDept && matchesYear && matchesStatus;
+  });
+
+  const departments = ['All', ...new Set(registrations.map(r => r.student?.department).filter(Boolean))];
+  const years = ['All', ...new Set(registrations.map(r => r.student?.year).filter(Boolean))];
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center gap-4">
+        <button onClick={onBack} className="p-2 hover:bg-gray-100 rounded-full transition-all">
+          <XCircle size={24} className="text-gray-400" />
+        </button>
+        <h3 className="text-2xl font-display font-bold">{event.title || event.name}</h3>
+      </div>
+
+      <div className="grid lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-1 space-y-6">
+          <div className="card p-6 space-y-4">
+            <div className="aspect-video rounded-xl overflow-hidden bg-gray-100">
+              <img src={event.banner_url || "https://picsum.photos/seed/event/800/400"} className="w-full h-full object-cover" alt="" />
+            </div>
+            <div className="space-y-3">
+              <div className="flex justify-between items-center text-xs">
+                <span className="text-gray-400 font-bold uppercase tracking-widest">Category</span>
+                <span className="font-bold text-red-primary uppercase">{event.category}</span>
+              </div>
+              <div className="flex justify-between items-center text-xs">
+                <span className="text-gray-400 font-bold uppercase tracking-widest">Date</span>
+                <span className="font-bold flex items-center gap-1"><Calendar size={12} /> {new Date(event.date).toLocaleDateString()}</span>
+              </div>
+              <div className="flex justify-between items-center text-xs">
+                <span className="text-gray-400 font-bold uppercase tracking-widest">Venue</span>
+                <span className="font-bold flex items-center gap-1"><MapPin size={12} /> {event.location}</span>
+              </div>
+              {event.website && (
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-gray-400 font-bold uppercase tracking-widest">Website</span>
+                  <a href={event.website} target="_blank" rel="noopener noreferrer" className="text-blue-600 font-bold flex items-center gap-1 hover:underline">
+                    <Globe size={12} /> Visit Site
+                  </a>
+                </div>
+              )}
+            </div>
+            <p className="text-xs text-gray-500 leading-relaxed border-t border-gray-50 pt-4">
+              {event.description}
+            </p>
+
+            {event.status !== 'Completed' && (
+              <div className="pt-4 border-t border-gray-50">
+                <button 
+                  onClick={async () => {
+                    // 1. Update event status to 'Completed'
+                    const { error } = await supabase.from('events').update({ status: 'Completed', updated_at: new Date().toISOString() }).eq('id', event.id);
+                    if (error) {
+                      setNotification({ message: `Error updating event: ${error.message}`, type: 'error' });
+                      return;
+                    }
+
+                    // 2. Automatically issue certificates to all attended students
+                    const { error: regError } = await supabase.from('registrations')
+                      .update({ 
+                        certificate_issued: true, 
+                        issued_at: new Date().toISOString() 
+                      })
+                      .eq('event_id', event.id)
+                      .eq('status', 'attended');
+                    
+                    if (regError) {
+                      setNotification({ message: `Event completed, but certificate issuance failed: ${regError.message}`, type: 'error' });
+                    } else {
+                      setNotification({ message: `${event.title || event.name} marked as completed and certificates issued to participants.`, type: 'success' });
+                    }
+                    onBack();
+                  }}
+                  className="w-full bg-green-600 text-white font-bold py-3 rounded-xl text-xs hover:bg-green-700 transition-all shadow-lg shadow-green-600/20 flex items-center justify-center gap-2"
+                >
+                   <CheckCircle2 size={16} /> Mark Event Complete
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="lg:col-span-2 space-y-6">
+          <div className="card p-6">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
+              <h4 className="text-lg font-bold">Registrations ({filteredRegistrations.length})</h4>
+              <div className="flex flex-wrap gap-2 w-full md:w-auto">
+                <div className="relative flex-1 md:w-64">
+                  <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                  <input 
+                    type="text" 
+                    placeholder="Search students..." 
+                    className="w-full pl-9 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-lg text-xs outline-none focus:border-red-primary"
+                    value={searchQuery}
+                    onChange={e => setSearchQuery(e.target.value)}
+                  />
+                </div>
+                <button 
+                  onClick={() => {
+                    const csv = [
+                      ['Name', 'Email', 'Department', 'Year', 'Status', 'Attended'],
+                      ...filteredRegistrations.map(r => [
+                        r.student_name,
+                        r.student?.email,
+                        r.student?.department || 'N/A',
+                        r.student?.year || 'N/A',
+                        r.status,
+                        r.attended ? 'Yes' : 'No'
+                      ])
+                    ].map(e => e.join(",")).join("\n");
+                    const blob = new Blob([csv], { type: 'text/csv' });
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.setAttribute('href', url);
+                    a.setAttribute('download', `registrations-${event.id}.csv`);
+                    a.click();
+                  }}
+                  className="btn-secondary py-2 px-3 text-xs flex items-center gap-2"
+                >
+                  <Download size={14} /> Export
+                </button>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-3 mb-6">
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest px-1">Branch</label>
+                <select 
+                  className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-1.5 text-[11px] font-bold outline-none focus:border-red-primary"
+                  value={deptFilter}
+                  onChange={e => setDeptFilter(e.target.value)}
+                >
+                  {departments.map(d => <option key={d} value={d}>{d}</option>)}
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest px-1">Year</label>
+                <select 
+                  className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-1.5 text-[11px] font-bold outline-none focus:border-red-primary"
+                  value={yearFilter}
+                  onChange={e => setYearFilter(e.target.value)}
+                >
+                  {years.map(y => <option key={y} value={y}>{y}</option>)}
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest px-1">Status</label>
+                <select 
+                  className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-1.5 text-[11px] font-bold outline-none focus:border-red-primary"
+                  value={statusFilter}
+                  onChange={e => setStatusFilter(e.target.value)}
+                >
+                  <option>All</option>
+                  <option>Attended</option>
+                  <option>Absent</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto -mx-6">
+              <table className="w-full text-left min-w-[600px]">
+                <thead className="bg-gray-50 border-y border-gray-100">
+                  <tr>
+                    <th className="px-6 py-3 text-[10px] font-bold uppercase text-gray-400">Student</th>
+                    <th className="px-6 py-3 text-[10px] font-bold uppercase text-gray-400">Branch & Year</th>
+                    <th className="px-6 py-3 text-[10px] font-bold uppercase text-gray-400">Status</th>
+                    <th className="px-6 py-3 text-[10px] font-bold uppercase text-gray-400 text-right">Attendance</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {loading ? (
+                    <tr>
+                      <td colSpan={4} className="px-6 py-12 text-center">
+                        <div className="flex flex-col items-center gap-2">
+                          <div className="w-6 h-6 border-2 border-red-primary border-t-transparent rounded-full animate-spin" />
+                          <p className="text-xs text-gray-400 font-bold uppercase">Loading...</p>
+                        </div>
+                      </td>
+                    </tr>
+                  ) : filteredRegistrations.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="px-6 py-12 text-center text-gray-400 text-xs italic">
+                        No registrations matching filters.
+                      </td>
+                    </tr>
+                  ) : filteredRegistrations.map(reg => (
+                    <tr key={reg.id} className="hover:bg-gray-50/50 transition-all font-display text-sm">
+                      <td className="px-6 py-4">
+                        <div className="flex flex-col">
+                          <span className="font-bold">{reg.student_name}</span>
+                          <span className="text-[10px] text-gray-400 tracking-tight">{reg.student?.email}</span>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="flex flex-col">
+                          <span className="text-xs font-medium">{reg.student?.department || 'N/A'}</span>
+                          <span className="text-[10px] text-gray-500">{reg.student?.year || 'N/A'}</span>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${
+                          reg.status === 'registered' ? 'bg-blue-50 text-blue-600' : 
+                          reg.status === 'attended' ? 'bg-green-50 text-green-600' : 'bg-gray-100 text-gray-500'
+                        }`}>
+                          {reg.status}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 text-right">
+                        {reg.attended ? (
+                          <div className="flex items-center justify-end gap-1.5 text-green-600 font-bold text-xs">
+                            <Check size={14} strokeWidth={3} />
+                            <span>Attended</span>
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-end gap-1.5 text-gray-400 font-bold text-xs">
+                            <X size={14} strokeWidth={3} />
+                            <span>Absent</span>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -1906,6 +2221,31 @@ function CertificatesTab({ setNotification, setConfirmModal, assignedEventIds, m
   const previewRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    if (!selectedEventId) {
+      setTemplate(null);
+      setTemplatePreview(null);
+      setNamePosition({ x: 50, y: 50 });
+      return;
+    }
+
+    const fetchDefaultTemplate = async () => {
+      const { data, error } = await supabase.from('events').select('certificate_template, certificate_coords').eq('id', selectedEventId).single();
+      if (data?.certificate_template) {
+        setTemplatePreview(data.certificate_template);
+        setTemplate('Event Default Template');
+        if (data.certificate_coords) {
+          setNamePosition(data.certificate_coords);
+        }
+      } else {
+        setTemplate(null);
+        setTemplatePreview(null);
+        setNamePosition({ x: 50, y: 50 });
+      }
+    };
+    fetchDefaultTemplate();
+  }, [selectedEventId]);
+
+  useEffect(() => {
     if (assignedEventIds.length === 0) return;
     const fetchParticipants = async () => {
       const { data } = await supabase.from('registrations').select('*').in('event_id', assignedEventIds).eq('attended', true);
@@ -1919,6 +2259,10 @@ function CertificatesTab({ setNotification, setConfirmModal, assignedEventIds, m
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      if (file.size > 2 * 1024 * 1024) {
+        setNotification({ message: 'Certificate template must be under 2MB.', type: 'error' });
+        return;
+      }
       const reader = new FileReader();
       reader.onloadend = () => {
         setTemplatePreview(reader.result as string);
@@ -1944,12 +2288,16 @@ function CertificatesTab({ setNotification, setConfirmModal, assignedEventIds, m
 
     setIsIssuing(true);
     try {
-      const { error } = await supabase.from('registrations').update({
+      const payload = {
         certificate_issued: true,
-        certificate_url: 'https://example.com/certificate-template.pdf',
+        certificate_url: templatePreview,
+        certificate_name_x: namePosition.x,
+        certificate_name_y: namePosition.y,
         issued_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
-      }).eq('id', participantId);
+      };
+      console.log("Issuing certificate with payload:", payload);
+      const { error } = await supabase.from('registrations').update(payload).eq('id', participantId);
       if (error) {
         setNotification({ message: `Certificate issue failed: ${error.message}`, type: 'error' });
         return;
@@ -1968,7 +2316,7 @@ function CertificatesTab({ setNotification, setConfirmModal, assignedEventIds, m
       return;
     }
 
-    const pending = filteredParticipants.filter(p => !p.certificateIssued);
+    const pending = filteredParticipants.filter(p => !p.certificateIssued || !p.certificateUrl || p.certificateUrl.length < 50);
     if (pending.length === 0) {
       setNotification({ message: "No pending certificates to issue.", type: 'error' });
       return;
@@ -1981,20 +2329,22 @@ function CertificatesTab({ setNotification, setConfirmModal, assignedEventIds, m
       onConfirm: async () => {
         setIsIssuing(true);
         try {
-          for (const p of pending) {
-            const { error } = await supabase.from('registrations').update({
-              certificate_issued: true,
-              certificate_url: 'https://example.com/certificate-template.pdf',
-              issued_at: new Date().toISOString(),
-              updated_at: new Date().toISOString()
-            }).eq('id', p.id);
-            if (error) {
-              throw new Error(error.message);
-            }
+          const ids = pending.map(p => p.id);
+          const { error } = await supabase.from('registrations').update({
+            certificate_issued: true,
+            certificate_url: templatePreview,
+            certificate_name_x: namePosition.x,
+            certificate_name_y: namePosition.y,
+            issued_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          }).in('id', ids);
+
+          if (error) {
+            throw new Error(error.message);
           }
           setNotification({ message: `Successfully issued ${pending.length} certificates!`, type: 'success' });
         } catch (err) {
-          setNotification({ message: `Failed to issue some certificates: ${err instanceof Error ? err.message : 'Unknown error'}`, type: 'error' });
+          setNotification({ message: `Failed to issue certificates: ${err instanceof Error ? err.message : 'Unknown error'}`, type: 'error' });
         } finally {
           setIsIssuing(false);
         }
@@ -2025,29 +2375,17 @@ function CertificatesTab({ setNotification, setConfirmModal, assignedEventIds, m
             onChange={(e) => setSelectedEventId(e.target.value)}
             className="bg-white border border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:border-red-primary"
           >
-            <option value="">All Events</option>
+            <option value="">Select Event</option>
             {myEvents.map(e => (
               <option key={e.id} value={e.id}>{e.title || e.name}</option>
             ))}
           </select>
           <button 
             onClick={handleIssueAll}
-            disabled={isIssuing || !template || filteredParticipants.length === 0}
+            disabled={isIssuing || !templatePreview || filteredParticipants.length === 0}
             className="btn-primary flex items-center gap-2 disabled:opacity-50"
           >
             <Award size={16} /> Issue All
-          </button>
-          <button onClick={() => {
-            const rows = filteredParticipants.map((p) => `${p.studentName},${p.studentId},${p.eventName || ''},${p.certificateIssued ? 'Issued' : 'Pending'}`).join('\n');
-            const csv = `data:text/csv;charset=utf-8,Student,Student ID,Event,Certificate Status\n${rows}`;
-            const link = document.createElement('a');
-            link.setAttribute('href', encodeURI(csv));
-            link.setAttribute('download', 'certificates-list.csv');
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-          }} className="btn-secondary flex items-center gap-2">
-            <Download size={16} /> Export
           </button>
         </div>
       </div>
@@ -2106,16 +2444,35 @@ function CertificatesTab({ setNotification, setConfirmModal, assignedEventIds, m
                     <Plus size={20} />
                   </div>
                   <p className="text-sm font-bold text-gray-600">Upload Template</p>
-                  <p className="text-[10px] text-gray-400 uppercase font-bold">PNG/JPG</p>
+                  <p className="text-[10px] text-gray-400 uppercase font-bold">PNG/JPG (Max 2MB)</p>
                 </div>
               )}
             </div>
+            {selectedEventId && templatePreview && (
+              <button 
+                onClick={async () => {
+                  try {
+                    const { error } = await supabase.from('events').update({
+                      certificate_template: templatePreview,
+                      certificate_coords: { x: namePosition.x, y: namePosition.y }
+                    }).eq('id', selectedEventId);
+                    if (error) throw error;
+                    setNotification({ message: 'Template saved as default for this event!', type: 'success' });
+                  } catch (err: any) {
+                    setNotification({ message: `Failed to save: ${err.message}`, type: 'error' });
+                  }
+                }}
+                className="w-full mt-4 btn-secondary py-2 text-[10px] font-bold uppercase transition-all"
+              >
+                Save as Event Default
+              </button>
+            )}
           </div>
         </div>
 
         <div className="lg:col-span-2 space-y-6">
           <div className="card p-6">
-            <div className="flex flex-col sm:flex-row gap-4 justify-between items-start sm:items-center mb-4">
+            <div className="flex flex-col sm:flex-row gap-4 justify-between items-start sm:items-center mb-6">
               <h3 className="font-bold">Participants ({filteredParticipants.length})</h3>
               <div className="relative w-full sm:w-64">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={14} />
@@ -2133,47 +2490,49 @@ function CertificatesTab({ setNotification, setConfirmModal, assignedEventIds, m
               <table className="w-full text-left min-w-[500px]">
                 <thead>
                   <tr className="text-[10px] font-bold text-gray-400 uppercase tracking-widest border-b border-gray-100">
-                    <th className="pb-3">Student</th>
-                    <th className="pb-3">Event</th>
-                    <th className="pb-3">Status</th>
-                    <th className="pb-3 text-right">Action</th>
+                    <th className="pb-3 px-2">Student</th>
+                    <th className="pb-3 px-2">Event</th>
+                    <th className="pb-3 px-2 text-right">Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
                   {filteredParticipants.map((p) => (
                     <tr key={p.id} className="hover:bg-gray-50/50 transition-all">
-                      <td className="py-3">
-                        <div className="flex items-center gap-2">
-                          <div className="w-7 h-7 rounded-full bg-red-50 text-red-primary flex items-center justify-center font-bold text-xs">
+                      <td className="py-4 px-2">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-full bg-red-100 text-red-primary flex items-center justify-center font-bold text-sm">
                             {p.studentName?.charAt(0) || '?'}
                           </div>
-                          <span className="text-sm font-medium">{p.studentName}</span>
+                          <div>
+                            <div className="text-sm font-bold text-gray-900">{p.studentName}</div>
+                            <div className="text-[10px] text-gray-500 font-medium uppercase tracking-wider">{p.studentId}</div>
+                          </div>
                         </div>
                       </td>
-                      <td className="py-3 text-xs text-gray-500">{p.eventName || 'N/A'}</td>
-                      <td className="py-3">
-                        {p.certificateIssued ? (
-                          <span className="bg-green-50 text-green-600 px-2 py-0.5 rounded text-[10px] font-bold uppercase flex items-center gap-1 w-fit">
-                            <Check size={8} /> Issued
-                          </span>
-                        ) : (
-                          <span className="bg-amber-50 text-amber-600 px-2 py-0.5 rounded text-[10px] font-bold uppercase w-fit">
-                            Pending
-                          </span>
-                        )}
+                      <td className="py-4 px-2">
+                        <div className="text-xs font-medium text-gray-700">{p.eventName || 'N/A'}</div>
                       </td>
-                      <td className="py-3 text-right">
-                        {p.certificateIssued ? (
-                          <button onClick={() => p.certificateUrl && window.open(p.certificateUrl, '_blank')} className="text-gray-400 hover:text-red-primary p-1">
-                            <Eye size={14} />
-                          </button>
+                      <td className="py-4 px-2 text-right">
+                        {p.certificateIssued && p.certificateUrl && p.certificateUrl.length > 50 ? (
+                          <div className="flex items-center justify-end gap-3">
+                            <span className="bg-green-100 text-green-700 px-2 py-1 rounded text-[10px] font-bold uppercase flex items-center gap-1">
+                              <CheckCircle2 size={10} /> Issued
+                            </span>
+                            <button 
+                              onClick={() => p.certificateUrl && window.open(p.certificateUrl, '_blank')}
+                              className="w-8 h-8 rounded-lg bg-gray-100 text-gray-600 flex items-center justify-center hover:bg-red-primary hover:text-white transition-all"
+                              title="View Certificate"
+                            >
+                              <Eye size={16} />
+                            </button>
+                          </div>
                         ) : (
                           <button 
                             onClick={() => handleIssueCertificate(p.id)}
-                            disabled={isIssuing || !template}
-                            className="btn-primary py-1 px-2 text-[10px] disabled:opacity-50"
+                            disabled={isIssuing || !templatePreview}
+                            className="bg-red-600 text-white px-4 py-1.5 rounded-lg text-[10px] font-bold uppercase hover:bg-red-700 disabled:opacity-50 transition-all shadow-sm"
                           >
-                            Issue
+                             {isIssuing ? '...' : (p.certificateIssued ? 'Re-issue' : 'Issue')}
                           </button>
                         )}
                       </td>
@@ -2181,8 +2540,11 @@ function CertificatesTab({ setNotification, setConfirmModal, assignedEventIds, m
                   ))}
                   {filteredParticipants.length === 0 && (
                     <tr>
-                      <td colSpan={4} className="py-8 text-center text-gray-400 text-xs">
-                        No eligible participants found.
+                      <td colSpan={3} className="py-12 text-center text-gray-400">
+                        <div className="flex flex-col items-center gap-2">
+                          <Award size={32} className="opacity-10" />
+                          <p className="text-sm font-medium">No eligible participants found</p>
+                        </div>
                       </td>
                     </tr>
                   )}
@@ -2191,6 +2553,132 @@ function CertificatesTab({ setNotification, setConfirmModal, assignedEventIds, m
             </div>
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// --- NOTIFICATIONS TAB ---
+function NotificationsTab({ coordinatorId, setNotification }: { coordinatorId: string, setNotification: (n: any) => void }) {
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetchNotifications = async () => {
+    if (!coordinatorId) return;
+    const { data } = await supabase
+      .from('notifications')
+      .select('*')
+      .or(`user_id.eq.all,user_id.eq.${coordinatorId}`)
+      .order('created_at', { ascending: false });
+    
+    if (data) setNotifications(data);
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    fetchNotifications();
+    const channel = supabase.channel(`coord_notifications_${coordinatorId}`)
+      .on('postgres_changes', { 
+        event: '*', 
+        schema: 'public', 
+        table: 'notifications' 
+      }, () => fetchNotifications())
+      .subscribe();
+    
+    return () => { supabase.removeChannel(channel); };
+  }, [coordinatorId]);
+
+  const markAsRead = async (id: string) => {
+    const { error } = await supabase.from('notifications').update({ read: true }).eq('id', id);
+    if (error) {
+      setNotification({ message: 'Failed to mark as read', type: 'error' });
+      return;
+    }
+  };
+
+  const deleteNotification = async (id: string) => {
+    const { error } = await supabase.from('notifications').delete().eq('id', id);
+    if (error) {
+      setNotification({ message: 'Failed to delete notification', type: 'error' });
+      return;
+    }
+    setNotification({ message: 'Notification deleted', type: 'success' });
+  };
+
+  if (loading) return <div className="py-12 text-center text-gray-400">Loading notifications...</div>;
+
+  return (
+    <div className="space-y-6 max-w-4xl mx-auto">
+      <div className="flex justify-between items-center">
+        <h3 className="text-2xl font-display font-bold">Notifications</h3>
+        <button 
+          onClick={async () => {
+            if (!coordinatorId) return;
+            const { error } = await supabase.from('notifications').update({ read: true }).eq('user_id', coordinatorId);
+            if (!error) {
+              setNotification({ message: 'All marked as read', type: 'success' });
+              fetchNotifications();
+            }
+          }}
+          className="text-xs font-bold text-red-primary hover:underline"
+        >
+          Mark all as read
+        </button>
+      </div>
+
+      <div className="space-y-4">
+        {notifications.length === 0 ? (
+          <div className="text-center py-24 card text-gray-400">
+            <Bell size={48} className="mx-auto mb-4 opacity-10" />
+            <p className="text-lg font-medium">No notifications yet</p>
+          </div>
+        ) : (
+          notifications.map((n) => (
+            <div 
+              key={n.id} 
+              className={`card p-5 transition-all border-l-4 ${
+                n.read ? 'border-transparent bg-white' : 'border-red-primary bg-red-50/30 shadow-md'
+              }`}
+            >
+              <div className="flex justify-between items-start gap-4">
+                <div className="flex gap-4">
+                  <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${
+                    n.type === 'assignment' ? 'bg-blue-100 text-blue-600' : 'bg-red-100 text-red-primary'
+                  }`}>
+                    {n.type === 'assignment' ? <Calendar size={18} /> : <AlertCircle size={18} />}
+                  </div>
+                  <div>
+                    <h4 className={`font-bold ${n.read ? 'text-gray-700' : 'text-gray-900 group-hover:text-red-primary'}`}>
+                      {n.title}
+                    </h4>
+                    <p className="text-sm text-gray-600 mt-1 leading-relaxed">{n.message}</p>
+                    <p className="text-[10px] text-gray-400 font-bold uppercase mt-2">
+                       {new Date(n.created_at).toLocaleString()}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  {!n.read && (
+                    <button 
+                      onClick={() => markAsRead(n.id)}
+                      className="p-2 text-gray-400 hover:text-green-600 transition-colors"
+                      title="Mark as read"
+                    >
+                      <CheckCircle2 size={16} />
+                    </button>
+                  )}
+                  <button 
+                    onClick={() => deleteNotification(n.id)}
+                    className="p-2 text-gray-400 hover:text-red-primary transition-colors"
+                    title="Delete"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))
+        )}
       </div>
     </div>
   );
