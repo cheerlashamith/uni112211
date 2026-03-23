@@ -299,7 +299,11 @@ function TasksTab({ volunteerId, setNotification }: { volunteerId: string, setNo
     if (!volunteerId) return;
 
     const fetchTasks = async () => {
-      const { data: tasksData } = await supabase.from('tasks').select('*').contains('assigned_to', [volunteerId]);
+      const { data: tasksData } = await supabase
+        .from('tasks')
+        .select('*')
+        .contains('assigned_to', [volunteerId])
+        .neq('status', 'archived');
       if (tasksData) {
         setTasks(tasksData.map((t: any) => ({
           ...t,
@@ -338,6 +342,26 @@ function TasksTab({ volunteerId, setNotification }: { volunteerId: string, setNo
     }
   };
 
+  const handleClearAllTasks = async () => {
+    const completedTasks = tasks.filter(t => ['done', 'completed'].includes((t.status || '').toLowerCase()));
+    if (completedTasks.length === 0) return;
+    try {
+      const { error } = await supabase
+        .from('tasks')
+        .update({ status: 'archived' })
+        .in('id', completedTasks.map(t => t.id));
+      
+      if (error) {
+        setNotification({ message: `Failed to clear tasks: ${error.message}`, type: 'error' });
+        return;
+      }
+      setTasks(prev => prev.filter(t => !['done', 'completed'].includes((t.status || '').toLowerCase())));
+      setNotification({ message: 'Completed tasks cleared from your view', type: 'success' });
+    } catch (error) {
+      setNotification({ message: 'Failed to clear tasks', type: 'error' });
+    }
+  };
+
   const filteredTasks = tasks.filter(t => {
     const status = (t.status || '').toLowerCase();
     if (filter === 'all') return true;
@@ -352,20 +376,27 @@ function TasksTab({ volunteerId, setNotification }: { volunteerId: string, setNo
 
   return (
     <div className="space-y-6">
-      {/* Filter Tabs */}
-      <div className="flex gap-4 border-b border-gray-200">
-        {['All', 'Pending', 'Done'].map(f => (
-          <button
-            key={f}
-            onClick={() => setFilter(f.toLowerCase())}
-            className={`pb-3 px-2 text-sm font-bold transition-all relative ${
-              filter === f.toLowerCase() ? 'text-red-primary' : 'text-gray-400'
-            }`}
-          >
-            {f}
-            {filter === f.toLowerCase() && <motion.div layoutId="tasks-filter" className="absolute bottom-0 left-0 right-0 h-0.5 bg-red-primary" />}
-          </button>
-        ))}
+      <div className="flex justify-between items-center border-b border-gray-200">
+        <div className="flex gap-4">
+          {['All', 'Pending', 'Done'].map(f => (
+            <button
+              key={f}
+              onClick={() => setFilter(f.toLowerCase())}
+              className={`pb-3 px-2 text-sm font-bold transition-all relative ${
+                filter === f.toLowerCase() ? 'text-red-primary' : 'text-gray-400'
+              }`}
+            >
+              {f}
+              {filter === f.toLowerCase() && <motion.div layoutId="tasks-filter" className="absolute bottom-0 left-0 right-0 h-0.5 bg-red-primary" />}
+            </button>
+          ))}
+        </div>
+        <button 
+          onClick={handleClearAllTasks}
+          className="pb-3 text-xs font-bold text-gray-400 hover:text-red-primary flex items-center gap-1 transition-colors"
+        >
+          <Trash2 size={14} /> Clear Done
+        </button>
       </div>
 
       {/* Tasks List */}
@@ -428,7 +459,6 @@ function TasksTab({ volunteerId, setNotification }: { volunteerId: string, setNo
 // --- ATTENDANCE TAB ---
 function AttendanceTab({ volunteerId, volunteerName, setNotification }: { volunteerId: string, volunteerName: string, setNotification: (n: any) => void }) {
   const [mode, setMode] = useState<'scan' | 'history'>('scan');
-  const [scanResult, setScanResult] = useState<string | null>(null);
   const [manualId, setManualId] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -471,14 +501,11 @@ function AttendanceTab({ volunteerId, volunteerName, setNotification }: { volunt
         
         for (const reg of teamRegs) {
           if (!reg.attended) {
-            const { data, error } = await supabase.rpc('mark_attendance', {
+            await supabase.rpc('mark_attendance', {
               p_registration_id: reg.id,
               p_scanner_id: volunteerId,
               p_scanner_name: volunteerName,
             });
-            if (error) {
-              console.error('Error marking team member attendance:', error);
-            }
           }
         }
         
@@ -492,15 +519,20 @@ function AttendanceTab({ volunteerId, volunteerName, setNotification }: { volunt
     }
   };
 
-  const handleMarkAttendance = async (registrationId: string) => {
-    if (!registrationId) return;
+  const handleMarkAttendance = async (input: string) => {
+    if (!input) return;
+
+    let registrationId = input;
+    if (input.includes('/attendance?id=')) {
+      registrationId = input.split('/attendance?id=')[1].split('&')[0];
+    }
+
     setIsProcessing(true);
     setError(null);
     setSuccess(null);
     setTeamMembers([]);
 
     try {
-      // First, get the registration to check for team_id
       const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-5][0-9a-f]{3}-[089ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(registrationId);
       
       let query = supabase.from('registrations').select('*');
@@ -518,16 +550,16 @@ function AttendanceTab({ volunteerId, volunteerName, setNotification }: { volunt
         return;
       }
 
-      // If it's a team registration, mark all team members
       if (regData.team_id) {
         const memberNames = await markTeamAttendance(regData.team_id, regData.event_id);
         if (memberNames) {
-          setSuccess(`Success! Team attendance marked for ${memberNames}`);
+          setSuccess(`Team success: ${memberNames}`);
+          setNotification({ message: `Team attendance marked for ${memberNames}`, type: 'success' });
         } else {
-          setSuccess(`Success! Attendance marked for ${regData.student_name || 'participant'}`);
+          setSuccess(`Attendance marked for ${regData.student_name}`);
+          setNotification({ message: `Attendance marked for ${regData.student_name}`, type: 'success' });
         }
       } else {
-        // Mark single attendance using RPC
         const { data, error: rpcError } = await supabase.rpc('mark_attendance', {
           p_registration_id: regData.id,
           p_scanner_id: volunteerId,
@@ -535,53 +567,29 @@ function AttendanceTab({ volunteerId, volunteerName, setNotification }: { volunt
         });
 
         if (rpcError) {
-          setError('Failed to verify pass. Please try again.');
+          setError('Verification failed. Please try again.');
           setIsProcessing(false);
           return;
         }
 
-        const result = data as {
-          ok?: boolean;
-          reason?: string;
-          student_name?: string;
-          event_name?: string;
-        } | null;
-
+        const result = data as any;
         if (!result?.ok) {
-          if (result?.reason === 'already_marked') {
-            setError(`Already Marked: Attendance for ${result.event_name || 'this event'} was already recorded.`);
-            setIsProcessing(false);
-            return;
-          }
-
-          if (result?.reason === 'not_found') {
-            setError('Invalid Pass: Registration not found.');
-            setIsProcessing(false);
-            return;
-          }
-
-          if (result?.reason === 'unauthorized') {
-            setError('You are not allowed to mark attendance.');
-            setIsProcessing(false);
-            return;
-          }
-
-          setError('Could not mark attendance. Please retry.');
+          setError(result?.reason === 'already_marked' ? `${result.student_name} is already marked.` : (result?.reason || 'Failed to mark.'));
           setIsProcessing(false);
           return;
         }
 
-        setSuccess(`Success! Attendance marked for ${result.student_name || 'participant'} - ${result.event_name || 'event'}`);
+        setSuccess(`Verified: ${result.student_name}`);
+        setNotification({ message: `Attendance marked for ${result.student_name}`, type: 'success' });
       }
     } catch (err) {
-      setError("Failed to mark attendance. Please try again.");
+      setError("System error. Please try again.");
     } finally {
       setIsProcessing(false);
     }
   };
 
   const resetScanner = () => {
-    setScanResult(null);
     setManualId('');
     setError(null);
     setSuccess(null);
@@ -590,7 +598,6 @@ function AttendanceTab({ volunteerId, volunteerName, setNotification }: { volunt
 
   return (
     <div className="space-y-6">
-      {/* Mode Toggle */}
       <div className="flex gap-4 border-b border-gray-200 mb-8">
         <button 
           onClick={() => setMode('scan')}
@@ -614,7 +621,6 @@ function AttendanceTab({ volunteerId, volunteerName, setNotification }: { volunt
 
       {mode === 'scan' ? (
         <div className="max-w-lg mx-auto space-y-6">
-          {/* Camera Error Fallback */}
           {cameraError && (
             <div className="card p-4 bg-amber-50 border-amber-200">
               <div className="flex items-center gap-3">
@@ -627,96 +633,66 @@ function AttendanceTab({ volunteerId, volunteerName, setNotification }: { volunt
             </div>
           )}
 
-          {/* Scanner or Success/Error State */}
-          {!scanResult && !success && !error ? (
-            <div className="space-y-8">
-              <div className="overflow-hidden rounded-3xl border-4 border-red-primary shadow-2xl bg-black min-h-[300px]">
-                <QRScanner 
-                  onScanSuccess={(id) => {
-                    setScanResult(id);
-                    handleMarkAttendance(id);
-                  }}
-                  onScanError={(err) => {
-                    setCameraError(err);
-                  }}
-                />
-              </div>
-
-              <div className="text-center">
-                <h3 className="text-2xl font-display font-bold">Scan Participant Pass</h3>
-                <p className="text-sm text-gray-500 mt-2">Point the camera at the student's event pass QR code.</p>
-              </div>
-              
-              <div className="pt-8 border-t border-gray-100">
-                <div className="card p-6 bg-gray-50/50">
-                  <p className="text-[10px] font-bold text-gray-400 uppercase mb-4 tracking-widest text-center">Manual Entry (7-Digit ID)</p>
-                  <div className="flex flex-col gap-4 max-w-sm mx-auto">
-                    <input 
-                      type="text" 
-                      maxLength={7}
-                      value={manualId}
-                      onChange={(e) => setManualId(e.target.value.replace(/\D/g, ''))}
-                      placeholder="Ex: 1234567" 
-                      className="w-full bg-white border border-gray-200 rounded-2xl px-4 py-4 text-2xl font-mono font-bold text-center tracking-[0.5em] outline-none focus:border-red-primary focus:ring-4 focus:ring-red-primary/5 transition-all"
-                    />
-                    <button 
-                      onClick={() => handleMarkAttendance(manualId)}
-                      disabled={manualId.length !== 7 || isProcessing}
-                      className="btn-primary w-full py-4 text-sm font-bold shadow-xl shadow-red-primary/20 disabled:opacity-50 disabled:grayscale transition-all"
-                    >
-                      {isProcessing ? 'Verifying...' : 'Verify & Mark Attendance'}
-                    </button>
-                  </div>
+          {(success || error) && (
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className={`p-6 rounded-3xl border-2 ${success ? 'bg-green-50 border-green-200 text-green-700' : 'bg-red-50 border-red-200 text-red-700'}`}
+            >
+              <div className="flex items-center gap-4">
+                <div className={`w-12 h-12 rounded-full flex items-center justify-center ${success ? 'bg-green-100' : 'bg-red-100'}`}>
+                  {success ? <CheckCircle2 size={24} /> : <AlertCircle size={24} />}
                 </div>
-              </div>
-            </div>
-          ) : (
-            <div className="card p-12 space-y-6">
-              {isProcessing ? (
-                <div className="flex flex-col items-center gap-4 py-8">
-                  <div className="w-16 h-16 border-4 border-red-primary border-t-transparent rounded-full animate-spin" />
-                  <p className="text-lg font-bold text-gray-500 uppercase tracking-widest">Processing...</p>
+                <div className="flex-1">
+                  <p className="text-lg font-bold">{success || error}</p>
+                  <p className="text-xs opacity-70">Scanner remains active for next participant.</p>
                 </div>
-              ) : (
-                <>
-                  {success && (
-                    <div className="flex flex-col items-center gap-4 text-center">
-                      <div className="w-24 h-24 bg-green-100 text-green-600 rounded-full flex items-center justify-center">
-                        <Check size={48} />
-                      </div>
-                      <h3 className="text-2xl font-display font-bold text-green-600">Attendance Recorded</h3>
-                      <p className="text-lg text-gray-600 font-bold">{success}</p>
-                      
-                      {teamMembers.length > 0 && (
-                        <div className="w-full bg-green-50 rounded-xl p-4 mt-4 text-left">
-                          <p className="text-xs font-bold text-green-700 mb-2 uppercase tracking-wider">Team Members Marked:</p>
-                          <div className="flex flex-wrap gap-2">
-                            {teamMembers.map((m: any) => (
-                              <span key={m.id} className="bg-white px-3 py-1 rounded-full text-[10px] font-bold text-green-700 border border-green-200 shadow-sm">
-                                {m.student_name}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  {error && (
-                    <div className="flex flex-col items-center gap-4 text-center">
-                      <div className="w-24 h-24 bg-red-100 text-red-primary rounded-full flex items-center justify-center">
-                        <X size={48} />
-                      </div>
-                      <h3 className="text-2xl font-display font-bold text-red-primary">Verification Failed</h3>
-                      <p className="text-lg text-gray-600">{error}</p>
-                    </div>
-                  )}
-                  <button onClick={resetScanner} className="btn-primary w-full py-4 text-lg mt-6 shadow-xl shadow-red-primary/10">
-                    Scan Next Pass
-                  </button>
-                </>
-              )}
-            </div>
+                <button onClick={resetScanner} className="p-2 hover:bg-black/5 rounded-full"><X size={20} /></button>
+              </div>
+            </motion.div>
           )}
+
+          <div className="space-y-8">
+            <div className="overflow-hidden rounded-3xl border-4 border-red-primary shadow-2xl bg-black min-h-[300px]">
+              <QRScanner 
+                continuous={true}
+                onScanSuccess={(id) => {
+                  handleMarkAttendance(id);
+                }}
+                onScanError={(err) => {
+                  setCameraError(err);
+                }}
+              />
+            </div>
+
+            <div className="text-center">
+              <h3 className="text-2xl font-display font-bold">Scan Participant Pass</h3>
+              <p className="text-sm text-gray-500 mt-2">Point the camera at the student's event pass QR code.</p>
+            </div>
+            
+            <div className="pt-8 border-t border-gray-100">
+              <div className="card p-6 bg-gray-50/50">
+                <p className="text-[10px] font-bold text-gray-400 uppercase mb-4 tracking-widest text-center">Manual Entry (7-Digit ID)</p>
+                <div className="flex flex-col gap-4 max-w-sm mx-auto">
+                  <input 
+                    type="text" 
+                    maxLength={7}
+                    value={manualId}
+                    onChange={(e) => setManualId(e.target.value.replace(/\D/g, ''))}
+                    placeholder="Ex: 1234567" 
+                    className="w-full bg-white border border-gray-200 rounded-2xl px-4 py-4 text-2xl font-mono font-bold text-center tracking-[0.5em] outline-none focus:border-red-primary focus:ring-4 focus:ring-red-primary/5 transition-all"
+                  />
+                  <button 
+                    onClick={() => handleMarkAttendance(manualId)}
+                    disabled={manualId.length !== 7 || isProcessing}
+                    className="btn-primary w-full py-4 text-sm font-bold shadow-xl shadow-red-primary/20 disabled:opacity-50 disabled:grayscale transition-all"
+                  >
+                    {isProcessing ? 'Verifying...' : 'Verify & Mark Attendance'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       ) : (
         <div className="space-y-4 max-w-lg mx-auto">
@@ -737,9 +713,6 @@ function AttendanceTab({ volunteerId, volunteerName, setNotification }: { volunt
                     <p className="text-[10px] text-gray-500 uppercase font-bold tracking-tight">
                       {item.eventName} • {item.attendedAt ? new Date(item.attendedAt).toLocaleTimeString() : ''}
                     </p>
-                    {item.team_id && (
-                      <span className="inline-block mt-1 text-[8px] bg-red-50 text-red-600 px-1.5 py-0.5 rounded font-black uppercase tracking-tighter">Team</span>
-                    )}
                   </div>
                 </div>
                 <div className="text-right">

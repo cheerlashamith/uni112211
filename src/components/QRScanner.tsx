@@ -6,12 +6,14 @@ interface QRScannerProps {
   onScanSuccess: (decodedText: string) => void;
   onScanError?: (errorMessage: string) => void;
   onClose?: () => void;
+  continuous?: boolean;
 }
 
 const QRScanner: React.FC<QRScannerProps> = ({ 
   onScanSuccess, 
   onScanError,
-  onClose 
+  onClose,
+  continuous = false
 }) => {
   const [hasCamera, setHasCamera] = useState(true);
   const [manualEntry, setManualEntry] = useState(false);
@@ -19,6 +21,7 @@ const QRScanner: React.FC<QRScannerProps> = ({
   const [scanning, setScanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const scannerRef = useRef<Html5Qrcode | null>(null);
+  const lastScanRef = useRef<{ text: string, time: number } | null>(null);
   const SCANNER_ID = "qr-reader-element";
 
   const stopScanner = async () => {
@@ -34,10 +37,8 @@ const QRScanner: React.FC<QRScannerProps> = ({
 
   const startScanner = async () => {
     try {
-      console.log("Starting scanner...");
       setError(null);
       setManualEntry(false);
-      setScanning(false);
       
       // Cleanup previous instance if any
       if (scannerRef.current) {
@@ -62,16 +63,28 @@ const QRScanner: React.FC<QRScannerProps> = ({
         aspectRatio: 1.0
       };
 
+      const handleSuccess = (decodedText: string) => {
+        // Prevent duplicate scans for the same QR code within 3 seconds in continuous mode
+        if (continuous && lastScanRef.current && 
+            lastScanRef.current.text === decodedText && 
+            Date.now() - lastScanRef.current.time < 3000) {
+          return;
+        }
+
+        lastScanRef.current = { text: decodedText, time: Date.now() };
+        onScanSuccess(decodedText);
+        
+        if (!continuous) {
+          stopScanner();
+        }
+      };
+
       // Try environment camera first, then fall back to any camera
       try {
         await html5QrCode.start(
           { facingMode: "environment" },
           config,
-          (decodedText) => {
-            console.log("Scan success:", decodedText);
-            onScanSuccess(decodedText);
-            stopScanner();
-          },
+          handleSuccess,
           () => {} // Silent errors during scanning
         );
       } catch (envError) {
@@ -79,10 +92,7 @@ const QRScanner: React.FC<QRScannerProps> = ({
         await html5QrCode.start(
           { facingMode: "user" }, // Try front camera if back fails
           config,
-          (decodedText) => {
-            onScanSuccess(decodedText);
-            stopScanner();
-          },
+          handleSuccess,
           () => {}
         );
       }

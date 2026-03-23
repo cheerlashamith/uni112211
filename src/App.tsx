@@ -18,6 +18,7 @@ import VolunteerDashboard from './pages/VolunteerDashboard';
 import ProtectedRoute from './components/ProtectedRoute';
 import { useAuth } from './context/AuthContext';
 import ProfileCompletionPage from './pages/ProfileCompletionPage';
+import AttendanceAction from './pages/AttendanceAction';
 
 const ROLE_TO_PATH: Record<string, string> = {
   'student': 'student',
@@ -30,8 +31,29 @@ const ROLE_TO_PATH: Record<string, string> = {
 };
 
 function DashboardRouter() {
-  const { currentUser } = useAuth();
-  const role = currentUser?.role || 'student';
+  const { currentUser, loading } = useAuth();
+  
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 text-gray-400">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-10 h-10 border-2 border-red-primary border-t-transparent rounded-full animate-spin" />
+          <p className="text-sm font-medium">Preparing Dashboard...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!currentUser) {
+    return <Navigate to="/login" replace />;
+  }
+
+  // Redirect to profile completion if student with incomplete profile
+  if (currentUser.role === 'student' && !currentUser.profileCompleted && !currentUser.isDemo) {
+    return <Navigate to="/complete-profile" replace />;
+  }
+
+  const role = currentUser.role || 'student';
   const path = ROLE_TO_PATH[role] || 'student';
   return <Navigate to={`/dashboard/${path}`} replace />;
 }
@@ -48,6 +70,11 @@ export default function App() {
 
         {/* Profile Completion Route */}
         <Route path="/complete-profile" element={<ProfileCompletionPage />} />
+
+        <Route path="/complete-profile" element={<ProfileCompletionPage />} />
+
+        {/* Attendance Action Route (Public-facing for QR) */}
+        <Route path="/attendance" element={<AttendanceAction />} />
 
         {/* Dashboard Routes */}
         <Route

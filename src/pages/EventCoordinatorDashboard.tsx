@@ -10,7 +10,7 @@ import {
 import { UniGuildData } from '../data';
 import DashboardShell from '../components/DashboardShell';
 import { motion, AnimatePresence } from 'motion/react';
-import { Html5QrcodeScanner } from 'html5-qrcode';
+import QRScanner from '../components/QRScanner';
 import { supabase, handleSupabaseError, OperationType } from '../supabase';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
@@ -91,7 +91,12 @@ export default function EventCoordinatorDashboard() {
       setAssignedEventIds(allAssignedIds);
 
       if (allAssignedIds.length > 0) {
-        const { data: events } = await supabase.from('events').select('*').in('id', allAssignedIds).order('date', { ascending: false });
+        const { data: events } = await supabase
+          .from('events')
+          .select('*')
+          .in('id', allAssignedIds)
+          .neq('status', 'archived')
+          .order('date', { ascending: false });
         if (events) setMyEvents(events.map(normalizeCoordinatorEvent));
       } else {
         setMyEvents([]);
@@ -150,6 +155,25 @@ export default function EventCoordinatorDashboard() {
     }
   };
 
+  const handleClearAllEvents = async () => {
+    if (myEvents.length === 0) return;
+    try {
+      const { error } = await supabase
+        .from('events')
+        .update({ status: 'archived' })
+        .in('id', myEvents.map(e => e.id));
+      
+      if (error) {
+        setNotification({ message: `Failed to clear events: ${error.message}`, type: 'error' });
+        return;
+      }
+      setMyEvents([]);
+      setNotification({ message: 'All assigned events cleared from your view', type: 'success' });
+    } catch (error) {
+      setNotification({ message: 'Failed to clear events', type: 'error' });
+    }
+  };
+
   useEffect(() => {
     if (notification) {
       const timer = setTimeout(() => setNotification(null), 3000);
@@ -179,7 +203,7 @@ export default function EventCoordinatorDashboard() {
             setNotification={setNotification}
           />
         ) : (
-          <EventsTab events={myEvents} onSelect={setSelectedEvent} setActiveTab={setActiveTab} />
+          <EventsTab events={myEvents} onSelect={setSelectedEvent} onClearAll={handleClearAllEvents} setActiveTab={setActiveTab} />
         );
       case 'attendance': return <AttendanceTab coordinatorId={coordinatorProfile?.id || coordinatorProfile?.uid} coordinatorName={coordinatorProfile?.name} assignedEventIds={assignedEventIds} myEvents={myEvents} />;
       case 'certificates': return <CertificatesTab setNotification={setNotification} setConfirmModal={setConfirmModal} assignedEventIds={assignedEventIds} myEvents={myEvents} />;
@@ -273,12 +297,18 @@ export default function EventCoordinatorDashboard() {
 }
 
 // --- EVENTS TAB ---
-function EventsTab({ events, onSelect, setActiveTab }: { events: any[], onSelect: (event: any) => void, setActiveTab: (tab: string) => void }) {
+function EventsTab({ events, onSelect, onClearAll, setActiveTab }: { events: any[], onSelect: (event: any) => void, onClearAll?: () => void, setActiveTab: (tab: string) => void }) {
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <h3 className="text-2xl font-display font-bold">My Events</h3>
         <div className="flex gap-3">
+          <button 
+            onClick={onClearAll}
+            className="btn-secondary py-2 px-4 text-xs flex items-center gap-2 text-gray-400 hover:text-red-primary border-gray-200"
+          >
+            <Trash2 size={16} /> Clear All
+          </button>
           <button 
             onClick={() => {
               const csvContent = "data:text/csv;charset=utf-8," + "Event,Date,Participants,Status\n" + events.map(r => `${r.title || r.name},${r.date},${r.registrationsCount || 0},${r.status}`).join("\n");
@@ -822,33 +852,11 @@ function StatCard({ label, value, icon, isUrgent, trend }: any) {
 function AttendanceTab({ coordinatorId, coordinatorName, assignedEventIds, myEvents }: { coordinatorId: string, coordinatorName: string, assignedEventIds: string[], myEvents: any[] }) {
   const [mode, setMode] = useState<'scan' | 'history'>('scan');
   const [selectedEventId, setSelectedEventId] = useState<string>(myEvents[0]?.id || '');
-  const [scanResult, setScanResult] = useState<string | null>(null);
   const [manualId, setManualId] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [history, setHistory] = useState<any[]>([]);
-  const scannerRef = useRef<Html5QrcodeScanner | null>(null);
-
-  useEffect(() => {
-    if (mode === 'scan' && !scanResult && !isProcessing && !success && !error) {
-      const scanner = new Html5QrcodeScanner(
-        "reader-coordinator",
-        { fps: 10, qrbox: { width: 250, height: 250 } },
-        /* verbose= */ false
-      );
-
-      scanner.render(onScanSuccess, onScanFailure);
-      scannerRef.current = scanner;
-    }
-
-    return () => {
-      if (scannerRef.current) {
-        scannerRef.current.clear().catch(err => console.error("Failed to clear scanner", err));
-        scannerRef.current = null;
-      }
-    };
-  }, [mode, scanResult, isProcessing, success, error]);
 
   // Fetch history for assigned events only
   useEffect(() => {
@@ -862,19 +870,14 @@ function AttendanceTab({ coordinatorId, coordinatorName, assignedEventIds, myEve
     return () => { supabase.removeChannel(channel); };
   }, [assignedEventIds]);
 
-  async function onScanSuccess(decodedText: string) {
-    if (isProcessing) return;
+  const handleMarkAttendance = async (input: string) => {
+    if (!input || !selectedEventId) return;
     
-    setScanResult(decodedText);
-    if (scannerRef.current) {
-      await scannerRef.current.clear();
+    let registrationId = input;
+    if (input.includes('/attendance?id=')) {
+      registrationId = input.split('/attendance?id=')[1].split('&')[0];
     }
-    handleMarkAttendance(decodedText);
-  }
 
-  function onScanFailure(error: any) {}
-
-  const handleMarkAttendance = async (registrationId: string) => {
     setIsProcessing(true);
     setError(null);
     setSuccess(null);
@@ -891,44 +894,21 @@ function AttendanceTab({ coordinatorId, coordinatorName, assignedEventIds, myEve
         return;
       }
 
-      const result = data as {
-        ok?: boolean;
-        reason?: string;
-        student_name?: string;
-        event_name?: string;
-      } | null;
-
+      const result = data as any;
       if (!result?.ok) {
-        if (result?.reason === 'already_marked') {
-          setError(`Already Marked: Attendance for ${result.event_name || 'this event'} was already recorded.`);
-          return;
-        }
-
-        if (result?.reason === 'not_found') {
-          setError('Invalid Pass: Registration not found.');
-          return;
-        }
-
-        if (result?.reason === 'unauthorized') {
-          setError('You are not allowed to mark attendance.');
-          return;
-        }
-
-        setError('Could not mark attendance. Please retry.');
+        setError(result?.reason === 'already_marked' ? `${result.student_name} is already present.` : (result?.reason || 'Failed to mark.'));
         return;
       }
 
-      setSuccess(`Success! Attendance marked for ${result.student_name || 'participant'} - ${result.event_name || 'event'}`);
+      setSuccess(`Verified: ${result.student_name}`);
     } catch (err) {
-      setError("Failed to mark attendance. Please try again.");
-      handleSupabaseError(err, OperationType.UPDATE, `registrations/${registrationId}`);
+      setError("System error. Please try again.");
     } finally {
       setIsProcessing(false);
     }
   };
 
   const resetScanner = () => {
-    setScanResult(null);
     setManualId('');
     setError(null);
     setSuccess(null);
@@ -971,74 +951,61 @@ function AttendanceTab({ coordinatorId, coordinatorName, assignedEventIds, myEve
 
         {mode === 'scan' ? (
           <div className="space-y-6">
-            {!scanResult && !success && !error ? (
-              <div className="space-y-8">
-                <div id="reader-coordinator" className="overflow-hidden rounded-3xl border-4 border-red-primary shadow-2xl bg-black min-h-[400px]" />
-                <div className="text-center">
-                  <h3 className="text-2xl font-display font-bold">Participant Check-In</h3>
-                  <p className="text-sm text-gray-500 mt-2 px-8">Scan the student's QR code from their UniGuild event pass.</p>
-                </div>
-                
-                <div className="pt-8 border-t border-gray-100">
-                  <div className="card p-6 bg-gray-50/50">
-                    <p className="text-[10px] font-bold text-gray-400 uppercase mb-4 tracking-widest text-center">Manual Entry (7-Digit ID)</p>
-                    <div className="flex flex-col gap-4 max-w-sm mx-auto">
-                      <input 
-                        type="text" 
-                        maxLength={7}
-                        value={manualId}
-                        onChange={(e) => setManualId(e.target.value.replace(/\D/g, ''))}
-                        placeholder="Ex: 1234567" 
-                        className="w-full bg-white border border-gray-200 rounded-2xl px-4 py-4 text-2xl font-mono font-bold text-center tracking-[0.5em] outline-none focus:border-red-primary focus:ring-4 focus:ring-red-primary/5 transition-all"
-                      />
-                      <button 
-                        onClick={() => handleMarkAttendance(manualId)}
-                        disabled={manualId.length !== 7 || isProcessing}
-                        className="btn-primary w-full py-4 text-sm font-bold shadow-xl shadow-red-primary/20 disabled:opacity-50 transition-all font-display"
-                      >
-                        {isProcessing ? 'Verifying...' : 'Verify & Mark Attendance'}
-                      </button>
-                    </div>
+            {(success || error) && (
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className={`p-6 rounded-3xl border-2 ${success ? 'bg-green-50 border-green-200 text-green-700' : 'bg-red-50 border-red-200 text-red-700'}`}
+              >
+                <div className="flex items-center gap-4">
+                  <div className={`w-12 h-12 rounded-full flex items-center justify-center ${success ? 'bg-green-100' : 'bg-red-100'}`}>
+                    {success ? <CheckCircle2 size={24} /> : <AlertCircle size={24} />}
                   </div>
-                </div>
-              </div>
-            ) : (
-              <div className="card p-12 space-y-6">
-                {isProcessing ? (
-                  <div className="flex flex-col items-center gap-4 py-8">
-                    <div className="w-16 h-16 border-4 border-red-primary border-t-transparent rounded-full animate-spin" />
-                    <p className="text-lg font-bold text-gray-500 uppercase tracking-widest">Verifying Pass...</p>
+                  <div className="flex-1 text-left">
+                    <p className="text-lg font-bold">{success || error}</p>
+                    <p className="text-xs opacity-70">Scanner remains active for next participant.</p>
                   </div>
-                ) : (
-                  <>
-                    {success && (
-                      <div className="flex flex-col items-center gap-4 text-center">
-                        <div className="w-24 h-24 bg-green-100 text-green-600 rounded-full flex items-center justify-center">
-                          <Check size={48} />
-                        </div>
-                        <h3 className="text-2xl font-display font-bold text-green-600">Verified Successfully</h3>
-                        <p className="text-lg text-gray-600 font-bold">{success}</p>
-                      </div>
-                    )}
-                    {error && (
-                      <div className="flex flex-col items-center gap-4 text-center">
-                        <div className="w-24 h-24 bg-red-100 text-red-primary rounded-full flex items-center justify-center">
-                          <X size={48} />
-                        </div>
-                        <h3 className="text-2xl font-display font-bold text-red-primary">Verification Failed</h3>
-                        <p className="text-lg text-gray-600">{error}</p>
-                      </div>
-                    )}
-                    <button 
-                      onClick={resetScanner}
-                      className="btn-primary w-full py-4 text-lg mt-4 shadow-xl shadow-red-primary/10"
-                    >
-                      Scan Next Pass
-                    </button>
-                  </>
-                )}
-              </div>
+                  <button onClick={resetScanner} className="p-2 hover:bg-black/5 rounded-full"><X size={20} /></button>
+                </div>
+              </motion.div>
             )}
+
+            <div className="space-y-8">
+              <div className="overflow-hidden rounded-3xl border-4 border-red-primary shadow-2xl bg-black min-h-[400px]">
+                <QRScanner 
+                  continuous={true}
+                  onScanSuccess={handleMarkAttendance}
+                  onScanError={(err) => setError(err)}
+                />
+              </div>
+              <div className="text-center">
+                <h3 className="text-2xl font-display font-bold">Participant Check-In</h3>
+                <p className="text-sm text-gray-500 mt-2 px-8">Scan the student's QR code from their UniGuild event pass.</p>
+              </div>
+              
+              <div className="pt-8 border-t border-gray-100">
+                <div className="card p-6 bg-gray-50/50">
+                  <p className="text-[10px] font-bold text-gray-400 uppercase mb-4 tracking-widest text-center">Manual Entry (7-Digit ID)</p>
+                  <div className="flex flex-col gap-4 max-w-sm mx-auto">
+                    <input 
+                      type="text" 
+                      maxLength={7}
+                      value={manualId}
+                      onChange={(e) => setManualId(e.target.value.replace(/\D/g, ''))}
+                      placeholder="Ex: 1234567" 
+                      className="w-full bg-white border border-gray-200 rounded-2xl px-4 py-4 text-2xl font-mono font-bold text-center tracking-[0.5em] outline-none focus:border-red-primary focus:ring-4 focus:ring-red-primary/5 transition-all"
+                    />
+                    <button 
+                      onClick={() => handleMarkAttendance(manualId)}
+                      disabled={manualId.length !== 7 || isProcessing}
+                      className="btn-primary w-full py-4 text-sm font-bold shadow-xl shadow-red-primary/20 disabled:opacity-50 transition-all font-display"
+                    >
+                      {isProcessing ? 'Verifying...' : 'Verify & Mark Attendance'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         ) : (
           <div className="space-y-4 text-left">
@@ -2611,19 +2578,36 @@ function NotificationsTab({ coordinatorId, setNotification }: { coordinatorId: s
     <div className="space-y-6 max-w-4xl mx-auto">
       <div className="flex justify-between items-center">
         <h3 className="text-2xl font-display font-bold">Notifications</h3>
-        <button 
-          onClick={async () => {
-            if (!coordinatorId) return;
-            const { error } = await supabase.from('notifications').update({ read: true }).eq('user_id', coordinatorId);
-            if (!error) {
-              setNotification({ message: 'All marked as read', type: 'success' });
-              fetchNotifications();
-            }
-          }}
-          className="text-xs font-bold text-red-primary hover:underline"
-        >
-          Mark all as read
-        </button>
+        <div className="flex gap-4">
+          <button 
+            onClick={async () => {
+              if (!coordinatorId) return;
+              const { error } = await supabase.from('notifications').update({ read: true }).eq('user_id', coordinatorId);
+              if (!error) {
+                // Update local state instantly
+                setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+                setNotification({ message: 'All marked as read', type: 'success' });
+              }
+            }}
+            className="text-xs font-bold text-red-primary hover:underline"
+          >
+            Mark all read
+          </button>
+          <button 
+            onClick={async () => {
+              if (!coordinatorId) return;
+              const { error } = await supabase.from('notifications').delete().eq('user_id', coordinatorId);
+              if (!error) {
+                // Update local state instantly - remove only user-specific ones
+                setNotifications(prev => prev.filter(n => n.user_id === 'all'));
+                setNotification({ message: 'Notifications cleared', type: 'success' });
+              }
+            }}
+            className="text-xs font-bold text-gray-400 hover:text-red-primary hover:underline"
+          >
+            Clear all
+          </button>
+        </div>
       </div>
 
       <div className="space-y-4">

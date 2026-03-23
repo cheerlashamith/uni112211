@@ -479,8 +479,8 @@ function JudgingQueueTab({ evaluatorId, setNotification }: { evaluatorId: string
                 <span className="text-[10px] bg-amber-50 text-amber-600 px-2 py-0.5 rounded font-bold uppercase">Pending</span>
               </div>
               
-              <h4 className="text-lg font-bold mb-1">{sub.studentName}</h4>
-              <p className="text-xs text-gray-500 mb-3">{sub.event?.title || sub.event?.name || 'Unknown Event'}</p>
+              <h4 className="text-lg font-bold mb-1">{sub.team_id ? `Team: ${sub.team_id}` : sub.studentName}</h4>
+              <p className="text-xs text-gray-500 mb-3">{sub.event?.title || sub.event?.name || 'Unknown Event'} • lead by {sub.studentName}</p>
               
               <div className="space-y-2 mb-4">
                 {sub.idea && (
@@ -553,8 +553,8 @@ function JudgingQueueTab({ evaluatorId, setNotification }: { evaluatorId: string
                     <Users size={20} />
                   </div>
                   <div>
-                    <p className="font-bold">{selectedSubmission.studentName}</p>
-                    <p className="text-xs text-gray-500">{selectedSubmission.event?.title || selectedSubmission.event?.name}</p>
+                    <p className="font-bold">{selectedSubmission.team_id ? `Team: ${selectedSubmission.team_id}` : selectedSubmission.studentName}</p>
+                    <p className="text-xs text-gray-500">{selectedSubmission.event?.title || selectedSubmission.event?.name} • Lead: {selectedSubmission.studentName}</p>
                   </div>
                 </div>
                 {selectedSubmission.idea && (
@@ -631,7 +631,12 @@ function MyScoresTab({ evaluatorId, setNotification }: { evaluatorId: string, se
     if (!evaluatorId) return;
 
     const fetchData = async () => {
-      const { data: scoresData } = await supabase.from('scores').select('*').eq('evaluator_id', evaluatorId).order('scored_at', { ascending: false });
+      const { data: scoresData } = await supabase
+        .from('scores')
+        .select('*')
+        .eq('evaluator_id', evaluatorId)
+        .neq('status', 'archived')
+        .order('scored_at', { ascending: false });
       
       // Get submission and student info
       const submissionIds = (scoresData || []).map((s: any) => s.submission_id);
@@ -711,6 +716,25 @@ function MyScoresTab({ evaluatorId, setNotification }: { evaluatorId: string, se
     }
   };
 
+  const handleClearAllScores = async () => {
+    if (scores.length === 0) return;
+    try {
+      const { error } = await supabase
+        .from('scores')
+        .update({ status: 'archived' })
+        .in('id', scores.map(s => s.id));
+      
+      if (error) {
+        setNotification({ message: `Failed to clear scores: ${error.message}`, type: 'error' });
+        return;
+      }
+      setScores([]);
+      setNotification({ message: 'All scores cleared from your view', type: 'success' });
+    } catch (error) {
+      setNotification({ message: 'Failed to clear scores', type: 'error' });
+    }
+  };
+
   const filteredScores = selectedEvent === 'all' 
     ? scores 
     : scores.filter((s: any) => s.event_id === selectedEvent);
@@ -732,6 +756,12 @@ function MyScoresTab({ evaluatorId, setNotification }: { evaluatorId: string, se
           <p className="text-sm text-gray-500">{filteredScores.length} submissions scored</p>
         </div>
         <div className="flex gap-4">
+          <button 
+            onClick={handleClearAllScores}
+            className="bg-white border border-gray-200 rounded-xl px-4 py-2 text-xs font-bold text-gray-400 hover:text-red-primary flex items-center gap-1 transition-colors"
+          >
+            <Trash2 size={14} /> Clear All
+          </button>
           <div className="bg-red-50 px-4 py-2 rounded-xl text-center">
             <p className="text-lg font-mono font-bold text-red-primary">{avgScore}</p>
             <p className="text-[10px] text-gray-500 uppercase font-bold">Avg Score</p>

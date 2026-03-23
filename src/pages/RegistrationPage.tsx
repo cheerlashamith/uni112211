@@ -4,7 +4,7 @@ import {
   Mail, Lock, ArrowRight, CheckCircle2, 
   Shield, Zap, Globe, AlertCircle
 } from 'lucide-react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../supabase';
 
@@ -18,14 +18,21 @@ const AUTH_ERROR_MESSAGES: Record<string, string> = {
 
 export default function RegistrationPage() {
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const location = useLocation();
+  const [error, setError] = useState<string | null>(location.state?.error || null);
   const navigate = useNavigate();
   const { currentUser, loading: authLoading, loginWithGoogle } = useAuth();
+
+  const [formData, setFormData] = useState({
+    email: location.state?.email || '',
+    password: '',
+    confirmPassword: '',
+  });
 
   // Redirect if already authenticated
   React.useEffect(() => {
     if (!authLoading && currentUser) {
-      if (currentUser.role === 'student' && !currentUser.profileCompleted) {
+      if (currentUser.role === 'student' && !currentUser.profileCompleted && !currentUser.isDemo) {
         navigate('/complete-profile');
       } else {
         navigate('/dashboard');
@@ -33,15 +40,11 @@ export default function RegistrationPage() {
     }
   }, [currentUser, authLoading, navigate]);
 
-  const [formData, setFormData] = useState({
-    email: '',
-    password: '',
-    confirmPassword: '',
-  });
-
   const getErrorMessage = (code: string): string => {
     return AUTH_ERROR_MESSAGES[code] || 'An error occurred. Please try again.';
   };
+
+  const [success, setSuccess] = useState(false);
 
   const handleRegister = async () => {
     if (!formData.email || !formData.password) {
@@ -61,6 +64,7 @@ export default function RegistrationPage() {
 
     setLoading(true);
     setError(null);
+    setSuccess(false);
     
     try {
       const { data, error: signUpError } = await supabase.auth.signUp({
@@ -75,11 +79,17 @@ export default function RegistrationPage() {
         throw new Error('Registration failed - no user returned');
       }
 
-      const intendedRole = user.user_metadata?.role;
-      if (intendedRole === 'student') {
-        navigate('/complete-profile');
+      // If Supabase is configured to require email confirmation, session will be null
+      if (data.session === null) {
+        setSuccess(true);
       } else {
-        navigate('/dashboard');
+        // If auto-confirm is on
+        const intendedRole = user.user_metadata?.role;
+        if (intendedRole === 'student') {
+          navigate('/complete-profile');
+        } else {
+          navigate('/dashboard');
+        }
       }
     } catch (err: any) {
       console.error(err);
@@ -166,6 +176,25 @@ export default function RegistrationPage() {
             <div className="mb-6 p-4 bg-red-50 border border-red-100 rounded-xl flex items-center gap-3 text-red-primary text-sm font-medium">
               <AlertCircle size={18} />
               {error}
+            </div>
+          )}
+
+          {success && (
+            <div className="mb-6 p-6 bg-green-50 border border-green-100 rounded-2xl flex flex-col gap-3">
+              <div className="flex items-center gap-3 text-green-600 font-bold">
+                <CheckCircle2 size={24} />
+                Verification Email Sent
+              </div>
+              <p className="text-sm text-green-700 leading-relaxed">
+                We've sent a verification link to <span className="font-bold">{formData.email}</span>. 
+                Please check your inbox and click the link to activate your account.
+              </p>
+              <button 
+                onClick={() => setSuccess(false)}
+                className="text-xs font-bold text-green-600 hover:underline text-left mt-2"
+              >
+                Go back to form
+              </button>
             </div>
           )}
 

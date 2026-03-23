@@ -305,7 +305,8 @@ CREATE POLICY "Coordinators can manage assignments" ON assignments FOR ALL USING
 
 -- USERS POLICIES
 CREATE POLICY "Users can view their own profile" ON users FOR SELECT USING (auth.uid() = uid);
-CREATE POLICY "Users can view all other users" ON users FOR SELECT USING (true);
+CREATE POLICY "Staff can view all profiles" ON users FOR SELECT USING (get_user_role(auth.uid()) IN ('admin', 'super_admin', 'head_coordinator', 'coordinator'));
+CREATE POLICY "Admins can update all profiles" ON users FOR UPDATE USING (get_user_role(auth.uid()) IN ('admin', 'super_admin'));
 CREATE POLICY "Users can update their own profile" ON users FOR UPDATE USING (auth.uid() = uid);
 CREATE POLICY "Anyone can create their profile" ON users FOR INSERT WITH CHECK (true);
 
@@ -348,6 +349,7 @@ CREATE POLICY "Users can create submissions" ON submissions FOR INSERT WITH CHEC
 
 -- SCORES POLICIES
 CREATE POLICY "Evaluators can view/update scores" ON scores FOR ALL USING (true);
+CREATE POLICY "Students can view their own scores" ON scores FOR SELECT USING (EXISTS (SELECT 1 FROM submissions WHERE submissions.id = submission_id AND submissions.student_id = auth.uid()));
 
 -- MESSAGES POLICIES
 CREATE POLICY "Users can view messages" ON messages FOR SELECT USING (true);

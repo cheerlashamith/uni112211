@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 
 /* ─────────────────────────────────────────────────────────────────
    ALL STYLES INJECTED INLINE — single-file, zero external CSS
@@ -2182,6 +2183,7 @@ export default function LandingPage() {
   const [activeFeature, setActiveFeature] = useState(0);
   const [openFaq, setOpenFaq] = useState(null);
   const navigate = useNavigate();
+  const { currentUser } = useAuth();
 
   // Inject styles
   useEffect(() => {
@@ -2244,8 +2246,14 @@ export default function LandingPage() {
             </ul>
 
             <div className="ug-nav-actions">
-              <Link to="/login" className="ug-btn ug-btn-ghost">Login</Link>
-              <Link to="/register" className="ug-btn ug-btn-primary">Get Started →</Link>
+              {currentUser ? (
+                <Link to="/dashboard" className="ug-btn ug-btn-primary">Go to Dashboard →</Link>
+              ) : (
+                <>
+                  <Link to="/login" className="ug-btn ug-btn-ghost">Login</Link>
+                  <Link to="/register" className="ug-btn ug-btn-primary">Get Started →</Link>
+                </>
+              )}
             </div>
 
             <button
@@ -2265,10 +2273,18 @@ export default function LandingPage() {
           <a key={label} href={href} onClick={() => setMobileOpen(false)}>{label}</a>
         ))}
         <div className="ug-mobile-divider" />
-        <Link to="/login" onClick={() => setMobileOpen(false)} style={{ fontSize: '1rem', color: 'var(--gray-400)' }}>Login</Link>
-        <Link to="/register" onClick={() => setMobileOpen(false)} className="ug-btn ug-btn-primary" style={{ marginTop: 8, fontSize: '1rem', padding: '14px 32px', color: 'white' }}>
-          Get Started Free →
-        </Link>
+        {currentUser ? (
+          <Link to="/dashboard" onClick={() => setMobileOpen(false)} className="ug-btn ug-btn-primary" style={{ marginTop: 8, fontSize: '1rem', padding: '14px 32px', color: 'white' }}>
+            Go to Dashboard →
+          </Link>
+        ) : (
+          <>
+            <Link to="/login" onClick={() => setMobileOpen(false)} style={{ fontSize: '1rem', color: 'var(--gray-400)' }}>Login</Link>
+            <Link to="/register" onClick={() => setMobileOpen(false)} className="ug-btn ug-btn-primary" style={{ marginTop: 8, fontSize: '1rem', padding: '14px 32px', color: 'white' }}>
+              Get Started Free →
+            </Link>
+          </>
+        )}
       </div>
 
       <main>
@@ -2296,12 +2312,20 @@ export default function LandingPage() {
                   volunteers, participants, QR check-ins, and live analytics, all in one unified dashboard.
                 </p>
                 <div className="ug-hero-actions">
-                  <Link to="/register" className="ug-btn ug-btn-primary ug-btn-xl" style={{ color: 'white' }}>
-                    Get Started Free →
-                  </Link>
-                  <a href="#features" className="ug-btn ug-btn-outline ug-btn-large">
-                    Explore Features
-                  </a>
+                  {currentUser ? (
+                    <Link to="/dashboard" className="ug-btn ug-btn-primary ug-btn-xl" style={{ color: 'white' }}>
+                      Go to Dashboard →
+                    </Link>
+                  ) : (
+                    <>
+                      <Link to="/register" className="ug-btn ug-btn-primary ug-btn-xl" style={{ color: 'white' }}>
+                        Get Started Free →
+                      </Link>
+                      <a href="#features" className="ug-btn ug-btn-outline ug-btn-large">
+                        Explore Features
+                      </a>
+                    </>
+                  )}
                 </div>
                 <div className="ug-hero-trust">
                   <div className="ug-hero-trust-avatars">
@@ -2488,7 +2512,7 @@ export default function LandingPage() {
                   <div className="ug-step-number">
                     <span className="ug-step-icon" dangerouslySetInnerHTML={{ __html: step.icon }} />
                   </div>
-                  <h3 className="ug-step-title">{step.title}</h3>
+                  <h3 className="ug-step-title" style={{ color: 'var(--red)' }}>{step.title}</h3>
                   <p className="ug-step-desc">{step.desc}</p>
                 </div>
               ))}
@@ -2511,9 +2535,9 @@ export default function LandingPage() {
             <div className="ug-roles-cards">
               {ROLES.map((role, i) => (
                 <div key={i} className={`ug-role-card ug-animate ug-animate-delay-${i + 1}`}>
-                  <span className={`ug-role-card-badge ${role.badge}`}><span dangerouslySetInnerHTML={{ __html: role.icon }} /> {role.title}</span>
+                  <span className={`ug-role-card-badge ${role.badge}`}><span dangerouslySetInnerHTML={{ __html: role.icon }} /> <span style={{ color: 'white' }}>{role.title}</span></span>
                   <span className="ug-role-emoji" dangerouslySetInnerHTML={{ __html: role.icon }} />
-                  <h3 className="ug-role-card-title">{role.title}</h3>
+                  <h3 className="ug-role-card-title" style={{ color: 'var(--red)' }}>{role.title}</h3>
                   <p className="ug-role-card-desc">{role.desc}</p>
                   <div className="ug-role-perms">
                     {role.perms.map((perm, j) => (

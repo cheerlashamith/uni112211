@@ -124,7 +124,11 @@ export default function SuperAdminDashboard() {
 
   useEffect(() => {
     const fetchJobs = async () => {
-      const { data } = await supabase.from('jobs').select('*').order('created_at', { ascending: false });
+      const { data } = await supabase
+        .from('jobs')
+        .select('*')
+        .neq('status', 'archived')
+        .order('created_at', { ascending: false });
       if (data) setJobs(data.map((j: any) => ({ ...j, appLink: j.app_link, isPaid: j.is_paid, applicationsCount: j.applications_count, createdBy: j.created_by, createdAt: j.created_at })));
     };
     fetchJobs();
@@ -134,7 +138,11 @@ export default function SuperAdminDashboard() {
 
   useEffect(() => {
     const fetchEvents = async () => {
-      const { data } = await supabase.from('events').select('*').order('date', { ascending: false });
+      const { data } = await supabase
+        .from('events')
+        .select('*')
+        .neq('status', 'archived')
+        .order('date', { ascending: false });
       if (data) setEvents(data.map((e: any) => ({ ...e, bannerUrl: e.banner_url, targetAudience: e.target_audience, createdBy: e.created_by, createdAt: e.created_at })));
     };
     fetchEvents();
@@ -266,13 +274,65 @@ export default function SuperAdminDashboard() {
     }
   };
 
+  const handleClearAllEvents = async () => {
+    if (events.length === 0) return;
+    try {
+      const { error } = await supabase
+        .from('events')
+        .update({ status: 'archived' })
+        .in('id', events.map(e => e.id));
+      
+      if (error) {
+        setNotification({ message: `Failed to clear events: ${error.message}`, type: 'error' });
+        return;
+      }
+      setEvents([]);
+      setNotification({ message: 'All events cleared from your view', type: 'success' });
+    } catch (error) {
+      setNotification({ message: 'Failed to clear events', type: 'error' });
+    }
+  };
+
+  const handleClearAllJobs = async () => {
+    if (jobs.length === 0) return;
+    try {
+      const { error } = await supabase
+        .from('jobs')
+        .update({ status: 'archived' })
+        .in('id', jobs.map(j => j.id));
+      
+      if (error) {
+        setNotification({ message: `Failed to clear jobs: ${error.message}`, type: 'error' });
+        return;
+      }
+      setJobs([]);
+      setNotification({ message: 'All jobs cleared from your view', type: 'success' });
+    } catch (error) {
+      setNotification({ message: 'Failed to clear jobs', type: 'error' });
+    }
+  };
+
+  const handleDeleteJob = async (jobId: string) => {
+    try {
+      const { error } = await supabase.from('jobs').delete().eq('id', jobId);
+      if (error) {
+        setNotification({ message: `Job deletion failed: ${error.message}`, type: 'error' });
+        return;
+      }
+      setNotification({ message: 'Job deleted successfully!', type: 'success' });
+      setJobs(prev => prev.filter(j => j.id !== jobId));
+    } catch (error) {
+      setNotification({ message: 'Job deletion failed', type: 'error' });
+    }
+  };
+
   const renderTabContent = () => {
     const tabs: Record<string, React.ReactNode> = {
       overview: <OverviewTab />,
       colleges: <CollegesTab setNotification={setNotification} setConfirmModal={setConfirmModal} setPromptModal={setPromptModal} />,
       users: <UsersTab setNotification={setNotification} setConfirmModal={setConfirmModal} setPromptModal={setPromptModal} />,
-      events: <EventsTab events={events} onPost={handleCreateEvent} onDeleteEvent={handleDeleteEvent} isPublishing={isPublishing} setNotification={setNotification} setConfirmModal={setConfirmModal} />,
-      jobs: <JobsTab jobs={jobs} onPost={handlePostJob} onUpdate={handleUpdateJob} isPosting={isPostingJob} setNotification={setNotification} />,
+      events: <EventsTab events={events} onPost={handleCreateEvent} onDeleteEvent={handleDeleteEvent} onClearAll={handleClearAllEvents} isPublishing={isPublishing} setNotification={setNotification} setConfirmModal={setConfirmModal} />,
+      jobs: <JobsTab jobs={jobs} onPost={handlePostJob} onUpdate={handleUpdateJob} onDeleteJob={handleDeleteJob} onClearAll={handleClearAllJobs} isPosting={isPostingJob} setNotification={setNotification} />,
       announcements: <AnnouncementsTab onSend={handleSendAnnouncement} setNotification={setNotification} setConfirmModal={setConfirmModal} setPromptModal={setPromptModal} />,
       approvals: <ApprovalsTab setNotification={setNotification} setConfirmModal={setConfirmModal} />,
       analytics: <AnalyticsTab />,
@@ -482,7 +542,7 @@ function OverviewTab() {
       {
         label: 'Events',
         data: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, stats.events],
-        borderColor: '#444444',
+        borderColor: '#3b82f6',
         backgroundColor: 'transparent',
         borderDash: [5, 5],
         tension: 0.4,
@@ -494,7 +554,7 @@ function OverviewTab() {
     labels: Object.keys(roleDistribution).map(r => r.charAt(0).toUpperCase() + r.slice(1)),
     datasets: [{
       data: Object.values(roleDistribution),
-      backgroundColor: ['#f40000', '#333333', '#666666', '#999999', '#cccccc', '#444444'],
+      backgroundColor: ['#f40000', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#f43f5e'],
       borderWidth: 0,
     }]
   };
@@ -1525,11 +1585,12 @@ function UsersTab({ setNotification, setConfirmModal, setPromptModal }: {
 }
 
 // --- EVENTS TAB ---
-function EventsTab({ events, onPost, onDeleteEvent, isPublishing, setNotification, setConfirmModal }: { 
+function EventsTab({ events, onPost, onDeleteEvent, onClearAll, isPublishing, setNotification, setConfirmModal }: { 
   events: any[], 
-  onPost: (evt: any) => Promise<boolean>,
+  onPost: (evt: any) => Promise<boolean>, 
   onDeleteEvent?: (eventId: string) => void,
-  isPublishing?: boolean,
+  onClearAll?: () => void,
+  isPublishing?: boolean, 
   setNotification: (n: any) => void,
   setConfirmModal?: (m: any) => void
 }) {
@@ -1972,12 +2033,20 @@ function EventsTab({ events, onPost, onDeleteEvent, isPublishing, setNotificatio
           <h3 className="text-3xl font-display font-bold text-gray-900 tracking-tight">Event Ecosystem</h3>
           <p className="text-base text-gray-500 mt-1">Monitor, create, and manage cross-institutional events.</p>
         </div>
-        <button 
-          onClick={() => setView('create')}
-          className="px-8 py-4 rounded-xl bg-red-primary text-white font-bold flex items-center gap-3 hover:bg-red-dark transition-all shadow-xl shadow-red-500/20"
-        >
-          <Plus size={24} /> New Event
-        </button>
+        <div className="flex gap-4">
+          <button 
+            onClick={onClearAll}
+            className="px-6 py-4 rounded-xl border border-gray-200 text-gray-400 font-bold flex items-center gap-3 hover:text-red-primary hover:border-red-primary transition-all shadow-sm bg-white"
+          >
+            <Trash2 size={24} /> Clear All
+          </button>
+          <button 
+            onClick={() => setView('create')}
+            className="px-8 py-4 rounded-xl bg-red-primary text-white font-bold flex items-center gap-3 hover:bg-red-dark transition-all shadow-xl shadow-red-500/20"
+          >
+            <Plus size={24} /> New Event
+          </button>
+        </div>
       </div>
 
       <div className="card border-none shadow-xl shadow-gray-200/50 overflow-hidden">
@@ -2035,6 +2104,16 @@ function EventsTab({ events, onPost, onDeleteEvent, isPublishing, setNotificatio
                         className="px-6 py-3 rounded-xl bg-red-primary text-white font-bold text-xs hover:bg-red-700 transition-all shadow-lg shadow-red-500/20 flex items-center gap-2"
                       >
                         Management <ExternalLink size={14} />
+                      </button>
+                      <button 
+                        onClick={() => {
+                          if (window.confirm('Are you sure you want to PERMANENTLY delete this event?')) {
+                            onDeleteEvent?.(event.id);
+                          }
+                        }}
+                        className="p-3 rounded-xl bg-gray-50 text-gray-400 hover:text-red-primary transition-all border border-gray-100"
+                      >
+                        <Trash2 size={16} />
                       </button>
                       <button 
                         onClick={() => {
@@ -2102,11 +2181,13 @@ function EventsTab({ events, onPost, onDeleteEvent, isPublishing, setNotificatio
 }
 
 // --- JOBS TAB ---
-function JobsTab({ jobs, onPost, onUpdate, isPosting, setNotification }: { 
+function JobsTab({ jobs, onPost, onUpdate, onDeleteJob, onClearAll, isPosting, setNotification }: { 
   jobs: any[], 
   onPost: (job: any) => Promise<boolean>, 
   onUpdate: (job: any) => void,
-  isPosting?: boolean,
+  onDeleteJob?: (jobId: string) => void,
+  onClearAll?: () => void,
+  isPosting?: boolean, 
   setNotification: (n: any) => void 
 }) {
   const [view, setView] = useState<'list' | 'post' | 'edit' | 'applications'>('list');
@@ -2653,12 +2734,20 @@ function JobsTab({ jobs, onPost, onUpdate, isPosting, setNotification }: {
           <h3 className="text-3xl font-display font-bold text-gray-900">Job Board Management</h3>
           <p className="text-gray-500 text-sm mt-1">Manage professional opportunities and review student applications.</p>
         </div>
-        <button 
-          onClick={() => setView('post')}
-          className="w-full md:w-auto px-8 py-4 bg-red-primary text-white rounded-2xl font-bold flex items-center justify-center gap-3 hover:bg-red-700 transition-all shadow-lg shadow-red-500/20 active:scale-95"
-        >
-          <Briefcase size={20} /> Post New Job
-        </button>
+        <div className="flex gap-4 w-full md:w-auto">
+          <button 
+            onClick={onClearAll}
+            className="flex-1 md:flex-initial px-6 py-4 rounded-xl border border-gray-200 text-gray-400 font-bold flex items-center justify-center gap-3 hover:text-red-primary hover:border-red-primary transition-all shadow-sm bg-white"
+          >
+            <Trash2 size={24} /> Clear All
+          </button>
+          <button 
+            onClick={() => setView('post')}
+            className="flex-1 md:flex-initial px-8 py-4 bg-red-primary text-white rounded-2xl font-bold flex items-center justify-center gap-3 hover:bg-red-700 transition-all shadow-lg shadow-red-500/20 active:scale-95"
+          >
+            <Briefcase size={20} /> Post New Job
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -2722,6 +2811,17 @@ function JobsTab({ jobs, onPost, onUpdate, isPosting, setNotification }: {
                     <ExternalLink size={16} />
                   </button>
                 )}
+                <button 
+                  onClick={() => {
+                    if (window.confirm('Are you sure you want to PERMANENTLY delete this job?')) {
+                      onDeleteJob?.(job.id);
+                    }
+                  }}
+                  className="py-3 px-4 rounded-xl border border-gray-200 text-gray-400 hover:text-red-primary hover:border-red-primary transition-all hover:bg-red-50"
+                  title="Delete Job"
+                >
+                  <Trash2 size={16} />
+                </button>
                 <button 
                   onClick={() => {
                     setEditingJob({...job, skills: Array.isArray(job.skills) ? job.skills.join(', ') : job.skills});

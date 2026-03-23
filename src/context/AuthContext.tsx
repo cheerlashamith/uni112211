@@ -26,6 +26,7 @@ interface AuthContextType {
   loginWithEmail: (email: string, password: string) => Promise<void>;
   loginWithGoogle: () => Promise<void>;
   loginAsDemo: (role: UserRole, email: string) => void;
+  refreshUser: () => Promise<void>;
   logout: () => Promise<void>;
 }
 
@@ -222,6 +223,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           await handleSession(session.user);
         } else {
           console.log('AuthContext: No initial session');
+          // If no session, we still want to wait a bit potentially for onAuthStateChange
+          // especially during OAuth redirect. But Supabase usually handles it in getSession.
           setLoading(false);
         }
       } catch (err) {
@@ -234,7 +237,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     initAuth();
 
-    return () => subscription.unsubscribe();
+    return () => {
+      subscription.unsubscribe();
+    };
   }, []);
 
   const loginWithEmail = async (email: string, password: string) => {
@@ -256,7 +261,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          redirectTo: `${window.location.origin}/dashboard`
+          redirectTo: `${window.location.origin}/dashboard`,
+          queryParams: {
+            prompt: 'select_account',
+            access_type: 'offline',
+          }
         }
       });
       if (error) throw error;
@@ -288,6 +297,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setSupabaseUser(null);
   };
 
+  const refreshUser = async () => {
+    if (!supabaseUser) return;
+    console.log('AuthContext: Refreshing user profile...');
+    const profile = await fetchUserProfile(supabaseUser.id);
+    if (profile) {
+      setCurrentUser(profile);
+    }
+  };
+
   const logout = async () => {
     setLoading(true);
     try {
@@ -304,7 +322,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ currentUser, supabaseUser, loading, loginWithEmail, loginWithGoogle, loginAsDemo, logout }}>
+    <AuthContext.Provider value={{ currentUser, supabaseUser, loading, loginWithEmail, loginWithGoogle, loginAsDemo, refreshUser, logout }}>
       {children}
     </AuthContext.Provider>
   );

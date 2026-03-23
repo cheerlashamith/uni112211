@@ -4,8 +4,9 @@ import {
   LayoutDashboard, Calendar, PlusCircle, Users, ClipboardCheck, 
   Megaphone, BarChart3, User, Clock, CheckCircle2, MoreVertical,
   Download, Search, Filter, Mail, Trash2, Edit, ExternalLink,
-  MapPin, Globe, Users2, UserPlus, Award, FileText, Check, Plus, Eye, QrCode, Briefcase, X, XCircle,
-  TrendingUp, ArrowUpRight, ScrollText, CheckSquare, AlertCircle, Camera, Upload
+  MapPin, Globe, Users2, UserPlus, Award, FileText, Check, Plus, Eye, QrCode, Briefcase, X, XCircle, Bell,
+  TrendingUp, ArrowUpRight, ScrollText, CheckSquare, AlertCircle, Camera, Upload, 
+  ChevronRight, ChevronLeft
 } from 'lucide-react';
 import { Bar, Line, Pie, Doughnut } from 'react-chartjs-2';
 import { 
@@ -16,7 +17,7 @@ import {
 import { UniGuildData } from '../data';
 import DashboardShell from '../components/DashboardShell';
 import { motion, AnimatePresence } from 'motion/react';
-import { Html5QrcodeScanner } from 'html5-qrcode';
+import QRScanner from '../components/QRScanner';
 import { supabase, handleSupabaseError, OperationType } from '../supabase';
 import { useAuth } from '../context/AuthContext';
 
@@ -33,6 +34,7 @@ const sidebarItems = [
   { id: 'certificates', label: 'Certificates', icon: <Award size={20} /> },
   { id: 'jobs', label: 'Jobs', icon: <Briefcase size={20} /> },
   { id: 'announcements', label: 'Announcements', icon: <Megaphone size={20} /> },
+  { id: 'notifications', label: 'Notifications', icon: <Bell size={20} /> },
   { id: 'analytics', label: 'Analytics', icon: <BarChart3 size={20} /> },
   { id: 'profile', label: 'Profile', icon: <User size={20} /> },
 ];
@@ -96,39 +98,43 @@ export default function HeadCoordinatorDashboard() {
       navigate('/login');
     }
   }, [currentUser, navigate]);
+  const fetchJobs = async () => {
+    const { data } = await supabase.from('jobs').select('*').order('created_at', { ascending: false });
+    if (data) setJobs(data.map((j: any) => ({ ...j, appLink: j.app_link, isPaid: j.is_paid, applicationsCount: j.applications_count, createdBy: j.created_by, createdAt: j.created_at })));
+  };
+
+  const fetchEvents = async () => {
+    const { data } = await supabase
+      .from('events')
+      .select('*')
+      .neq('status', 'archived')
+      .order('date', { ascending: false });
+    if (data) setEvents(data.map((e: any) => ({ ...e, bannerUrl: e.banner_url, targetAudience: e.target_audience, createdBy: e.created_by, createdAt: e.created_at })));
+  };
+
+  const fetchNotifications = async () => {
+    if (!currentUser) return;
+    const { data } = await supabase.from('notifications').select('*').or(`user_id.eq.${currentUser.uid},user_id.eq.all`).order('created_at', { ascending: false }).limit(20);
+    if (data) setNotifications(data.map((n: any) => ({ ...n, createdAt: n.created_at, userId: n.user_id })));
+  };
+
+  const fetchUsers = async () => {
+    const { data } = await supabase.from('users').select('*');
+    if (data) setAvailableUsers(data);
+  };
+
+  const fetchAssignments = async () => {
+    const { data } = await supabase.from('assignments').select('*');
+    if (data) setAssignments(data);
+  };
+
+  const fetchRegistrations = async () => {
+    const { data } = await supabase.from('registrations').select('*');
+    if (data) setRegistrations(data);
+  };
 
   useEffect(() => {
     if (!currentUser) return;
-
-    const fetchJobs = async () => {
-      const { data } = await supabase.from('jobs').select('*').order('created_at', { ascending: false });
-      if (data) setJobs(data.map((j: any) => ({ ...j, appLink: j.app_link, isPaid: j.is_paid, applicationsCount: j.applications_count, createdBy: j.created_by, createdAt: j.created_at })));
-    };
-
-    const fetchEvents = async () => {
-      const { data } = await supabase.from('events').select('*').order('date', { ascending: false });
-      if (data) setEvents(data.map((e: any) => ({ ...e, bannerUrl: e.banner_url, targetAudience: e.target_audience, createdBy: e.created_by, createdAt: e.created_at })));
-    };
-
-    const fetchNotifications = async () => {
-      const { data } = await supabase.from('notifications').select('*').or(`user_id.eq.${currentUser.uid},user_id.eq.all`).order('created_at', { ascending: false }).limit(20);
-      if (data) setNotifications(data.map((n: any) => ({ ...n, createdAt: n.created_at, userId: n.user_id })));
-    };
-
-    const fetchUsers = async () => {
-      const { data } = await supabase.from('users').select('*');
-      if (data) setAvailableUsers(data);
-    };
-
-    const fetchAssignments = async () => {
-      const { data } = await supabase.from('assignments').select('*');
-      if (data) setAssignments(data);
-    };
-
-    const fetchRegistrations = async () => {
-      const { data } = await supabase.from('registrations').select('*');
-      if (data) setRegistrations(data);
-    };
 
     fetchJobs();
     fetchEvents();
@@ -236,8 +242,28 @@ export default function HeadCoordinatorDashboard() {
       }
       setNotification({ message: 'Event deleted successfully!', type: 'success' });
       setTimeout(() => setNotification(null), 3000);
+      fetchEvents(); // Refresh list
     } catch (error) {
       setNotification({ message: 'Event deletion failed. Please try again.', type: 'error' });
+    }
+  };
+
+  const handleClearAllEvents = async () => {
+    if (events.length === 0) return;
+    try {
+      const { error } = await supabase
+        .from('events')
+        .update({ status: 'archived' })
+        .in('id', events.map(e => e.id));
+      
+      if (error) {
+        setNotification({ message: `Failed to clear events: ${error.message}`, type: 'error' });
+        return;
+      }
+      setEvents([]);
+      setNotification({ message: 'All events cleared from your view', type: 'success' });
+    } catch (error) {
+      setNotification({ message: 'Failed to clear events', type: 'error' });
     }
   };
 
@@ -316,7 +342,7 @@ export default function HeadCoordinatorDashboard() {
   const renderTabContent = () => {
     switch (activeTab) {
       case 'overview': return <OverviewTab setActiveTab={setActiveTab} events={events} jobs={jobs} />;
-      case 'my-events': return <MyEventsTab events={events} setNotification={setNotification} onDeleteEvent={handleDeleteEvent} onRemoveStaff={handleRemoveStaff} setConfirmModal={setConfirmModal} assignments={assignments} users={availableUsers} />;
+      case 'my-events': return <MyEventsTab events={events} setNotification={setNotification} onDeleteEvent={handleDeleteEvent} onClearAll={handleClearAllEvents} onRemoveStaff={handleRemoveStaff} setConfirmModal={setConfirmModal} assignments={assignments} users={availableUsers} />;
       case 'create-event': return <CreateEventTab onPost={handleCreateEvent} isPublishing={isPublishing} setNotification={setNotification} currentUser={currentUser} availableUsers={availableUsers} />;
       case 'my-team': return <MyTeamTab events={events} users={availableUsers} assignments={assignments} setNotification={setNotification} setConfirmModal={setConfirmModal} />;
       case 'assign-evaluator': return <MyTeamTab initialSection="evaluator" events={events} users={availableUsers} assignments={assignments} setNotification={setNotification} setConfirmModal={setConfirmModal} />;
@@ -326,6 +352,7 @@ export default function HeadCoordinatorDashboard() {
       case 'certificates': return <CertificatesTab events={events} registrations={registrations} setNotification={setNotification} setConfirmModal={setConfirmModal} />;
       case 'jobs': return <JobsTab jobs={jobs} onPost={handlePostJob} isPosting={isPostingJob} setNotification={setNotification} />;
       case 'announcements': return <AnnouncementsTab onSend={handleSendAnnouncement} setNotification={setNotification} notifications={notifications} />;
+      case 'notifications': return <HeadNotificationsTab userId={currentUser?.uid} notifications={notifications} setNotifications={setNotifications} setNotification={setNotification} />;
       case 'analytics': return <AnalyticsTab events={events} />;
       case 'profile': return <ProfileTab coordinator={coordinator} setCoordinator={setCoordinator} onSave={handleSaveProfile} setNotification={setNotification} />;
       default: return <OverviewTab setActiveTab={setActiveTab} events={events} jobs={jobs} />;
@@ -517,12 +544,13 @@ function StatCard({ label, value, icon, isUrgent }: any) {
 }
 
 // --- MY EVENTS TAB ---
-function MyEventsTab({ events, setNotification, assignments = [], users = [], onDeleteEvent, onRemoveStaff, setConfirmModal }: { 
+function MyEventsTab({ events, setNotification, assignments = [], users = [], onDeleteEvent, onClearAll, onRemoveStaff, setConfirmModal }: { 
   events: any[], 
   setNotification: (n: any) => void,
   assignments?: any[],
   users?: any[],
   onDeleteEvent?: (eventId: string) => void,
+  onClearAll?: () => void,
   onRemoveStaff?: (assignmentId: string) => void,
   setConfirmModal?: (m: any) => void
 }) {
@@ -535,6 +563,9 @@ function MyEventsTab({ events, setNotification, assignments = [], users = [], on
         <div className="flex justify-between items-center">
           <h3 className="text-2xl font-display font-bold">Managed Events</h3>
           <div className="flex gap-2">
+            <button onClick={onClearAll} className="btn-secondary py-2 px-4 text-xs flex items-center gap-2 text-gray-400 hover:text-red-primary border-gray-200">
+              <Trash2 size={16} /> Clear All
+            </button>
             <button onClick={() => {
               const rows = events.map((e) => `${e.name},${e.category},${e.date},${e.slots?.filled ?? 0},${e.status || 'Upcoming'}`).join('\n');
               const csv = `data:text/csv;charset=utf-8,Event,Category,Date,Participants,Status\n${rows}`;
@@ -1189,6 +1220,7 @@ function CreateEventTab({ onPost, isPublishing, setNotification, currentUser, av
 }
 
 // --- MY TEAM TAB ---
+// --- MY TEAM TAB ---
 function MyTeamTab({ initialSection = 'overview', events = [], users = [], assignments = [], setNotification, setConfirmModal }: { 
   initialSection?: string,
   events?: any[],
@@ -1199,6 +1231,11 @@ function MyTeamTab({ initialSection = 'overview', events = [], users = [], assig
 }) {
   const [section, setSection] = useState(initialSection);
   const [selectedEventId, setSelectedEventId] = useState('');
+
+  // Sync section with initialSection prop when sidebar is clicked
+  useEffect(() => {
+    setSection(initialSection);
+  }, [initialSection]);
 
   const handleAssign = async (userId: string, role: string) => {
     if (!selectedEventId) {
@@ -1220,38 +1257,70 @@ function MyTeamTab({ initialSection = 'overview', events = [], users = [], assig
     }
   };
 
-
   const renderSection = () => {
+    const commonHeader = (title: string) => (
+      <div className="flex justify-between items-center mb-6">
+        <div className="flex items-center gap-4">
+          <button 
+            onClick={() => setSection('overview')}
+            className="p-2 hover:bg-gray-100 rounded-full transition-all text-gray-400 hover:text-red-primary"
+          >
+            <ChevronRight className="rotate-180" size={20} />
+          </button>
+          <h4 className="text-xl font-display font-bold text-red-primary">{title}</h4>
+        </div>
+        <div className="flex gap-4">
+          <select 
+            className="bg-white border border-gray-200 rounded-lg px-4 py-2 text-xs font-bold outline-none focus:border-red-primary min-w-[200px]"
+            value={selectedEventId}
+            onChange={e => setSelectedEventId(e.target.value)}
+          >
+            <option value="">Select Target Event</option>
+            {events.map(e => <option key={e.id} value={e.id}>{e.name || e.title}</option>)}
+          </select>
+        </div>
+      </div>
+    );
+
+    const sectionNav = (
+      <div className="flex gap-4 mb-6 bg-gray-50 p-1 rounded-xl w-fit">
+        {[
+          { id: 'evaluator', label: 'Evaluators', count: users.filter(u => u.role === 'evaluator').length },
+          { id: 'coordinator', label: 'Coordinators', count: users.filter(u => u.role === 'coordinator').length },
+          { id: 'volunteer', label: 'Volunteers', count: users.filter(u => u.role === 'volunteer').length }
+        ].map(s => (
+          <button
+            key={s.id}
+            onClick={() => setSection(s.id)}
+            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${
+              section === s.id ? 'bg-white shadow-sm text-red-primary' : 'text-gray-400 hover:text-gray-600'
+            }`}
+          >
+            {s.label} ({s.count})
+          </button>
+        ))}
+      </div>
+    );
+
     switch (section) {
       case 'evaluator':
         return (
           <div className="space-y-6">
-            <div className="flex justify-between items-center">
-              <h4 className="text-lg font-bold text-red-primary">Assign Evaluator</h4>
-              <div className="flex gap-4">
-                <select 
-                  className="bg-white border border-gray-200 rounded-lg px-4 py-2 text-xs font-bold outline-none focus:border-red-primary"
-                  value={selectedEventId}
-                  onChange={e => setSelectedEventId(e.target.value)}
-                >
-                  <option value="">Select Target Event</option>
-                  {events.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
-                </select>
-              </div>
-            </div>
-            <div className="grid md:grid-cols-2 gap-4">
+            {commonHeader('Staff Management')}
+            {sectionNav}
+            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
               {users.filter(u => u.role === 'evaluator').map(user => {
                 const isAssigned = assignments.some(a => a.user_id === user.uid && a.event_id === selectedEventId);
                 return (
-                  <div key={user.uid} className="card p-4 flex justify-between items-center">
+                  <div key={user.uid} className="card p-4 flex justify-between items-center group hover:border-red-primary transition-all">
                     <div>
                       <p className="font-bold">{user.name}</p>
-                      <p className="text-xs text-gray-500">{user.email}</p>
+                      <p className="text-[10px] text-gray-400 font-bold uppercase">{user.email}</p>
                     </div>
                     <button 
                       onClick={() => !isAssigned && handleAssign(user.uid, 'evaluator')}
                       disabled={isAssigned}
-                      className={`text-xs font-bold hover:underline ${isAssigned ? 'text-gray-300' : 'text-red-primary'}`}
+                      className={`btn-primary px-4 py-2 text-[10px] font-bold uppercase tracking-wider ${isAssigned ? 'opacity-30 cursor-not-allowed' : ''}`}
                     >
                       {isAssigned ? 'Assigned' : 'Assign'}
                     </button>
@@ -1259,7 +1328,9 @@ function MyTeamTab({ initialSection = 'overview', events = [], users = [], assig
                 );
               })}
               {users.filter(u => u.role === 'evaluator').length === 0 && (
-                <p className="text-xs text-gray-400 italic">No evaluators found.</p>
+                <div className="col-span-full py-12 text-center bg-gray-50 rounded-2xl border-2 border-dashed border-gray-200">
+                  <p className="text-gray-400 italic text-sm">No evaluators found in system.</p>
+                </div>
               )}
             </div>
           </div>
@@ -1267,62 +1338,52 @@ function MyTeamTab({ initialSection = 'overview', events = [], users = [], assig
       case 'coordinator':
         return (
           <div className="space-y-6">
-            <div className="flex justify-between items-center">
-              <h4 className="text-lg font-bold text-red-primary">Assign Event Coordinator</h4>
-              <select 
-                className="bg-white border border-gray-200 rounded-lg px-4 py-2 text-xs font-bold outline-none focus:border-red-primary"
-                value={selectedEventId}
-                onChange={e => setSelectedEventId(e.target.value)}
-              >
-                <option value="">Select Target Event</option>
-                {events.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
-              </select>
-            </div>
-            <div className="grid md:grid-cols-2 gap-4">
+            {commonHeader('Staff Management')}
+            {sectionNav}
+            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
               {users.filter(u => u.role === 'coordinator').map(user => {
                 const isAssigned = assignments.some(a => a.user_id === user.uid && a.event_id === selectedEventId);
                 return (
-                  <div key={user.uid} className="card p-4 flex justify-between items-center">
+                  <div key={user.uid} className="card p-4 flex justify-between items-center group hover:border-red-primary transition-all">
                     <div>
                       <p className="font-bold">{user.name}</p>
-                      <p className="text-xs text-gray-500">{user.email}</p>
+                      <p className="text-[10px] text-gray-400 font-bold uppercase">{user.email}</p>
                     </div>
                     <button 
                       onClick={() => !isAssigned && handleAssign(user.uid, 'coordinator')}
                       disabled={isAssigned}
-                      className={`text-xs font-bold hover:underline ${isAssigned ? 'text-gray-300' : 'text-red-primary'}`}
+                      className={`btn-primary px-4 py-2 text-[10px] font-bold uppercase tracking-wider ${isAssigned ? 'opacity-30 cursor-not-allowed' : ''}`}
                     >
                       {isAssigned ? 'Assigned' : 'Assign'}
                     </button>
                   </div>
                 );
               })}
+              {users.filter(u => u.role === 'coordinator').length === 0 && (
+                <div className="col-span-full py-12 text-center bg-gray-50 rounded-2xl border-2 border-dashed border-gray-200">
+                  <p className="text-gray-400 italic text-sm">No coordinators found in system.</p>
+                </div>
+              )}
             </div>
           </div>
         );
       case 'volunteer':
         return (
           <div className="space-y-6">
-            <div className="flex justify-between items-center">
-              <h4 className="text-lg font-bold text-red-primary">Assign Volunteers</h4>
-              <select 
-                className="bg-white border border-gray-200 rounded-lg px-4 py-2 text-xs font-bold outline-none focus:border-red-primary"
-                value={selectedEventId}
-                onChange={e => setSelectedEventId(e.target.value)}
-              >
-                <option value="">Select Target Event</option>
-                {events.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
-              </select>
-            </div>
-            <div className="grid md:grid-cols-3 gap-4">
+            {commonHeader('Staff Management')}
+            {sectionNav}
+            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
               {users.filter(u => u.role === 'volunteer').map(user => {
                 const isAssigned = assignments.some(a => a.user_id === user.uid && a.event_id === selectedEventId);
                 return (
-                  <div key={user.uid} className="card p-4 flex justify-between items-center">
-                    <p className="font-bold text-sm">{user.name}</p>
+                  <div key={user.uid} className="card p-4 flex justify-between items-center group hover:border-red-primary transition-all">
+                    <div>
+                      <p className="font-bold text-sm">{user.name}</p>
+                      <p className="text-[10px] text-gray-400 font-bold uppercase">{user.email}</p>
+                    </div>
                     <input 
                       type="checkbox" 
-                      className="accent-red-primary" 
+                      className="accent-red-primary w-5 h-5" 
                       checked={isAssigned}
                       onChange={() => !isAssigned && handleAssign(user.uid, 'volunteer')}
                       disabled={isAssigned}
@@ -1330,6 +1391,11 @@ function MyTeamTab({ initialSection = 'overview', events = [], users = [], assig
                   </div>
                 );
               })}
+              {users.filter(u => u.role === 'volunteer').length === 0 && (
+                <div className="col-span-full py-12 text-center bg-gray-50 rounded-2xl border-2 border-dashed border-gray-200">
+                  <p className="text-gray-400 italic text-sm">No volunteers found in system.</p>
+                </div>
+              )}
             </div>
           </div>
         );
@@ -1341,17 +1407,17 @@ function MyTeamTab({ initialSection = 'overview', events = [], users = [], assig
         return (
           <div className="space-y-6">
             <div className="grid md:grid-cols-3 gap-6">
-              <div className="card p-6 text-center">
-                <p className="text-3xl font-mono font-bold text-red-primary">{coordCount.toString().padStart(2, '0')}</p>
-                <p className="text-[10px] font-bold uppercase text-gray-400">Event Coordinators</p>
+              <div className="card p-6 text-center shadow-lg shadow-red-primary/5 hover:translate-y-[-4px] transition-all cursor-pointer" onClick={() => setSection('coordinator')}>
+                <p className="text-4xl font-mono font-bold text-red-primary mb-1">{coordCount.toString().padStart(2, '0')}</p>
+                <p className="text-[10px] font-bold uppercase text-gray-400 tracking-widest">Event Coordinators</p>
               </div>
-              <div className="card p-6 text-center">
-                <p className="text-3xl font-mono font-bold text-red-primary">{evalCount.toString().padStart(2, '0')}</p>
-                <p className="text-[10px] font-bold uppercase text-gray-400">Evaluators</p>
+              <div className="card p-6 text-center shadow-lg shadow-red-primary/5 hover:translate-y-[-4px] transition-all cursor-pointer" onClick={() => setSection('evaluator')}>
+                <p className="text-4xl font-mono font-bold text-red-primary mb-1">{evalCount.toString().padStart(2, '0')}</p>
+                <p className="text-[10px] font-bold uppercase text-gray-400 tracking-widest">Evaluators</p>
               </div>
-              <div className="card p-6 text-center">
-                <p className="text-3xl font-mono font-bold text-red-primary">{volCount.toString().padStart(2, '0')}</p>
-                <p className="text-[10px] font-bold uppercase text-gray-400">Volunteers</p>
+              <div className="card p-6 text-center shadow-lg shadow-red-primary/5 hover:translate-y-[-4px] transition-all cursor-pointer" onClick={() => setSection('volunteer')}>
+                <p className="text-4xl font-mono font-bold text-red-primary mb-1">{volCount.toString().padStart(2, '0')}</p>
+                <p className="text-[10px] font-bold uppercase text-gray-400 tracking-widest">Volunteers</p>
               </div>
             </div>
 
@@ -1360,54 +1426,66 @@ function MyTeamTab({ initialSection = 'overview', events = [], users = [], assig
               <div className="flex gap-2">
                 <button 
                   onClick={() => setSection('coordinator')}
-                  className="btn-secondary py-2 px-4 text-[10px] font-bold uppercase tracking-wider"
+                  className="btn-primary py-2 px-6 text-[10px] font-bold uppercase tracking-wider flex items-center gap-2"
                 >
-                  Manage Team
+                  <Plus size={14} /> Assign Staff
                 </button>
               </div>
             </div>
 
             <div className="card overflow-hidden">
-              <table className="w-full text-left">
-                <thead className="bg-gray-50 border-b border-gray-200">
-                  <tr>
-                    <th className="px-6 py-4 text-[10px] font-bold uppercase text-gray-400">Member</th>
-                    <th className="px-6 py-4 text-[10px] font-bold uppercase text-gray-400">Role</th>
-                    <th className="px-6 py-4 text-[10px] font-bold uppercase text-gray-400">Assigned Event</th>
-                    <th className="px-6 py-4 text-[10px] font-bold uppercase text-gray-400 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {assignments.map(a => {
-                    const user = users.find(u => u.uid === a.user_id);
-                    const event = events.find(e => e.id === a.event_id);
-                    return (
-                      <tr key={a.id} className="hover:bg-gray-50 transition-all text-sm">
-                        <td className="px-6 py-4 font-bold">{user?.name}</td>
-                        <td className="px-6 py-4 uppercase font-bold text-[10px]">{a.role}</td>
-                        <td className="px-6 py-4">{event?.name || '---'}</td>
-                        <td className="px-6 py-4 text-right">
-                          <button 
-                            onClick={async () => {
-                              const { error } = await supabase.from('assignments').delete().eq('id', a.id);
-                              if (error) setNotification({ message: `Failed to remove: ${error.message}`, type: 'error' });
-                              else setNotification({ message: 'Member removed from assignment.', type: 'success' });
-                            }} 
-                            className="p-2 text-gray-400 hover:text-red-primary"
-                          >
-                            <Trash2 size={16} />
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                  {assignments.length === 0 && (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead className="bg-gray-50 border-b border-gray-200">
                     <tr>
-                      <td colSpan={4} className="px-6 py-10 text-center text-gray-400 italic">No team assignments found.</td>
+                      <th className="px-6 py-4 text-[10px] font-bold uppercase text-gray-400 tracking-widest">Member</th>
+                      <th className="px-6 py-4 text-[10px] font-bold uppercase text-gray-400 tracking-widest">Role</th>
+                      <th className="px-6 py-4 text-[10px] font-bold uppercase text-gray-400 tracking-widest">Assigned Event</th>
+                      <th className="px-6 py-4 text-[10px] font-bold uppercase text-gray-400 tracking-widest text-right">Actions</th>
                     </tr>
-                  )}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {assignments.map(a => {
+                      const user = users.find(u => u.uid === a.user_id);
+                      const event = events.find(e => e.id === a.event_id);
+                      return (
+                        <tr key={a.id} className="hover:bg-gray-50 transition-all text-sm group">
+                          <td className="px-6 py-4">
+                            <p className="font-bold">{user?.name || 'Unknown User'}</p>
+                            <p className="text-[10px] text-gray-400">{user?.email}</p>
+                          </td>
+                          <td className="px-6 py-4">
+                            <span className={`text-[10px] px-2 py-0.5 rounded font-bold uppercase ${
+                              a.role === 'coordinator' ? 'bg-blue-50 text-blue-600' :
+                              a.role === 'evaluator' ? 'bg-amber-50 text-amber-600' : 'bg-purple-50 text-purple-600'
+                            }`}>
+                              {a.role}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 font-medium">{event?.name || event?.title || '---'}</td>
+                          <td className="px-6 py-4 text-right">
+                            <button 
+                              onClick={async () => {
+                                const { error } = await supabase.from('assignments').delete().eq('id', a.id);
+                                if (error) setNotification({ message: `Failed to remove: ${error.message}`, type: 'error' });
+                                else setNotification({ message: 'Member removed from assignment.', type: 'success' });
+                              }} 
+                              className="p-2 text-gray-400 hover:text-red-primary hover:bg-red-50 rounded-lg transition-all"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {assignments.length === 0 && (
+                      <tr>
+                        <td colSpan={4} className="px-6 py-12 text-center text-gray-400 italic">No team assignments found. Click "Assign Staff" to get started.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         );
@@ -1416,14 +1494,6 @@ function MyTeamTab({ initialSection = 'overview', events = [], users = [], assig
 
   return (
     <div className="space-y-6">
-      {section !== 'overview' && (
-        <button 
-          onClick={() => setSection('overview')}
-          className="text-xs font-bold text-gray-400 hover:text-red-primary flex items-center gap-1 mb-4"
-        >
-          ← Back to Overview
-        </button>
-      )}
       {renderSection()}
     </div>
   );
@@ -1439,46 +1509,26 @@ function AttendanceTab({ events = [], registrations = [], setNotification }: {
   const [selectedEventId, setSelectedEventId] = useState('');
   const [manualId, setManualId] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
-  const scannerRef = useRef<Html5QrcodeScanner | null>(null);
   const { currentUser } = useAuth();
 
   const filteredRegistrations = registrations.filter(r => r.event_id === selectedEventId);
 
-  useEffect(() => {
-    if (mode === 'scan' && !isProcessing) {
-      const scanner = new Html5QrcodeScanner(
-        "hc-scanner",
-        { fps: 10, qrbox: { width: 250, height: 250 } },
-        false
-      );
-
-      scanner.render(async (text) => {
-        if (isProcessing) return;
-        await scanner.clear();
-        scannerRef.current = null;
-        handleMarkAttendance(text);
-      }, (err) => {});
-      
-      scannerRef.current = scanner;
+  const handleMarkAttendance = async (input: string) => {
+    if (!input || !selectedEventId || !currentUser) return;
+    
+    // Extract ID from full URL if scanned via our /attendance?id= link
+    let registrationId = input;
+    if (input.includes('/attendance?id=')) {
+      registrationId = input.split('/attendance?id=')[1].split('&')[0];
     }
 
-    return () => {
-      if (scannerRef.current) {
-        scannerRef.current.clear().catch(err => console.error("Failed to clear scanner", err));
-        scannerRef.current = null;
-      }
-    };
-  }, [mode, isProcessing]);
-
-  const handleMarkAttendance = async (id: string) => {
-    if (!id || !currentUser) return;
     setIsProcessing(true);
 
     try {
       const { data, error } = await supabase.rpc('mark_attendance', {
-        p_registration_id: id,
+        p_registration_id: registrationId,
         p_scanner_id: currentUser.uid,
-        p_scanner_name: currentUser.email || 'Head Coordinator'
+        p_scanner_name: currentUser.name || currentUser.email || 'Head Coordinator'
       });
 
       if (error) throw error;
@@ -1486,14 +1536,13 @@ function AttendanceTab({ events = [], registrations = [], setNotification }: {
       const result = data as any;
       if (result?.ok) {
         setNotification({ 
-          message: `Attendance marked for ${result.student_name} (${result.event_name})`, 
+          message: `Attendance marked: ${result.student_name}`, 
           type: 'success' 
         });
         setManualId('');
-        if (mode === 'scan') setMode('list');
       } else {
         setNotification({ 
-          message: `Failed: ${result?.reason || 'Unknown error'}`, 
+          message: result?.reason === 'already_marked' ? `${result.student_name} is already present.` : (result?.reason || 'Failed to mark attendance'), 
           type: 'error' 
         });
       }
@@ -1558,7 +1607,13 @@ function AttendanceTab({ events = [], registrations = [], setNotification }: {
               <Camera size={20} className="text-red-primary" />
               Live Scanner
             </h4>
-            <div id="hc-scanner" className="overflow-hidden rounded-2xl border-2 border-dashed border-gray-200" />
+            <div className="overflow-hidden rounded-2xl border-4 border-white shadow-xl bg-black min-h-[300px]">
+              <QRScanner 
+                continuous={true}
+                onScanSuccess={handleMarkAttendance}
+                onScanError={(err) => setNotification({ message: err, type: 'error' })}
+              />
+            </div>
             <p className="text-[10px] text-gray-400 mt-4 text-center font-bold uppercase tracking-widest">
               Position the QR code within the frame to scan
             </p>
@@ -2875,6 +2930,63 @@ function CertificatesTab({ events = [], registrations = [], setNotification, set
             </div>
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function HeadNotificationsTab({ userId, notifications, setNotifications, setNotification }: any) {
+  const handleMarkAllRead = async () => {
+    if (!userId) return;
+    const { error } = await supabase.from('notifications').update({ read: true }).eq('user_id', userId);
+    if (!error) {
+      setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+      setNotification({ message: 'All marked as read', type: 'success' });
+    }
+  };
+
+  const handleClearAll = async () => {
+    if (!userId) return;
+    const { error } = await supabase.from('notifications').delete().eq('user_id', userId);
+    if (!error) {
+      setNotifications(prev => prev.filter(n => n.user_id === 'all'));
+      setNotification({ message: 'Personal notifications cleared', type: 'success' });
+    }
+  };
+
+  return (
+    <div className="space-y-6 max-w-4xl mx-auto">
+      <div className="flex justify-between items-center">
+        <h3 className="text-2xl font-display font-bold">Notifications</h3>
+        <div className="flex gap-4">
+          <button onClick={handleMarkAllRead} className="text-xs font-bold text-red-primary hover:underline">Mark all read</button>
+          <button onClick={handleClearAll} className="text-xs font-bold text-gray-400 hover:text-red-primary hover:underline">Clear all</button>
+        </div>
+      </div>
+      <div className="space-y-4">
+        {notifications.length === 0 ? (
+          <div className="text-center py-24 card text-gray-400">
+            <Bell size={48} className="mx-auto mb-4 opacity-10" />
+            <p className="text-lg font-medium">No notifications yet</p>
+          </div>
+        ) : (
+          notifications.map((n: any) => (
+            <div key={n.id} className={`card p-5 border-l-4 ${n.read ? 'border-transparent bg-white' : 'border-red-primary bg-red-50/30 shadow-md'}`}>
+              <div className="flex justify-between items-start gap-4">
+                <div className="flex gap-4">
+                  <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${n.type === 'assignment' ? 'bg-blue-100 text-blue-600' : 'bg-red-100 text-red-primary'}`}>
+                    {n.type === 'assignment' ? <Calendar size={18} /> : <AlertCircle size={18} />}
+                  </div>
+                  <div>
+                    <h4 className="font-bold">{n.title}</h4>
+                    <p className="text-sm text-gray-600 mt-1 leading-relaxed">{n.message}</p>
+                    <p className="text-[10px] text-gray-400 font-bold uppercase mt-2">{new Date(n.createdAt || n.created_at).toLocaleString()}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))
+        )}
       </div>
     </div>
   );

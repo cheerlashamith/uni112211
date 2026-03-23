@@ -10,7 +10,7 @@ import { useAuth } from '../context/AuthContext';
 import { supabase } from '../supabase';
 
 export default function ProfileCompletionPage() {
-  const { currentUser, supabaseUser } = useAuth();
+  const { currentUser, supabaseUser, refreshUser } = useAuth();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -152,6 +152,9 @@ export default function ProfileCompletionPage() {
         .eq('uid', supabaseUser.id);
 
       if (updateError) throw updateError;
+
+      // Refresh user context to update profileCompleted status
+      await refreshUser();
 
       setSuccess(true);
       setTimeout(() => {

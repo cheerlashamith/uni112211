@@ -27,7 +27,7 @@ export default function LoginPage() {
   // Redirect if already authenticated
   React.useEffect(() => {
     if (!authLoading && currentUser) {
-      if (currentUser.role === 'student' && !currentUser.profileCompleted) {
+      if (currentUser.role === 'student' && !currentUser.profileCompleted && !currentUser.isDemo) {
         navigate('/complete-profile');
       } else {
         navigate('/dashboard');
@@ -45,16 +45,22 @@ export default function LoginPage() {
     setError(null);
     try {
       await loginWithEmail(email, password);
-      // AuthContext will update currentUser, but we can't check it immediately here 
-      // due to state update cycle. The useEffect in ProtectedRoute or a small delay 
-      // in AuthContext navigation would handle this. 
-      // For now, let's just go to dashboard, and ProtectedRoute will catch it.
       navigate('/dashboard');
     } catch (err: any) {
       console.error(err);
       const msg = err.message || '';
-      if (msg.includes('Invalid login credentials')) {
-        setError('Invalid email or password. If you do not have an account, please sign up first.');
+      
+      // Specifically handle user not found/invalid credentials as a suggestion to register
+      if (msg.includes('Invalid login credentials') || msg.toLowerCase().includes('user not found')) {
+        setError("Account not found. Redirecting to register page...");
+        setTimeout(() => {
+          navigate('/register', { 
+            state: { 
+              error: 'No account found with this email address. Please Sign Up first.',
+              email: email 
+            } 
+          });
+        }, 1500);
       } else {
         setError(msg || 'Login failed. Please check your credentials.');
       }

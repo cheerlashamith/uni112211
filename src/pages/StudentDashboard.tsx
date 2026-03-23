@@ -46,22 +46,47 @@ export default function StudentDashboard() {
   const [loading, setLoading] = useState(true);
   const [notification, setNotification] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
   const navigate = useNavigate();
-  const { currentUser, logout } = useAuth();
+  const { currentUser, logout, refreshUser } = useAuth();
   const userId = currentUser?.uid;
 
   const fetchProfile = async () => {
     if (!userId) return;
     const { data, error } = await supabase.from('users').select('*').eq('uid', userId).maybeSingle();
-    if (data) setStudentProfile({ uid: data.uid, ...data });
-    else if (!data && !error && !currentUser?.isDemo) {
+    if (data) {
+      // Map snake_case to camelCase
+      setStudentProfile({ 
+        uid: data.uid, 
+        ...data,
+        resumeUrl: data.resume_url,
+        workExperience: data.work_experience,
+        profileCompleted: data.profile_completed
+      });
+    } else if (!data && !error && !currentUser?.isDemo) {
       setStudentProfile({ uid: userId, name: currentUser?.name, email: currentUser?.email, role: 'student', college: 'Sasi Institute of Technology' });
     }
   };
 
   const fetchRegistrations = async () => {
     if (!userId) return;
-    const { data } = await supabase.from('registrations').select('*').eq('student_id', userId);
+    const { data } = await supabase.from('registrations')
+      .select('*')
+      .eq('student_id', userId)
+      .neq('status', 'archived');
     if (data) {
+      // Fetch scores for these registrations
+      const regIds = data.map((r: any) => r.id);
+      const { data: subsData } = await supabase.from('submissions').select('id, registration_id').in('registration_id', regIds);
+      const subIds = (subsData || []).map((s: any) => s.id);
+      const { data: scoresData } = await supabase.from('scores').select('*').in('submission_id', subIds);
+
+      const scoreMap = new Map();
+      if (scoresData) {
+        scoresData.forEach(s => {
+          const sub = (subsData || []).find(sub => sub.id === s.submission_id);
+          if (sub) scoreMap.set(sub.registration_id, s);
+        });
+      }
+
       setRegistrations(data.map((r: any) => ({
         ...r,
         studentId: r.student_id,
@@ -77,6 +102,8 @@ export default function StudentDashboard() {
         date: r.date,
         host: r.host,
         category: r.category,
+        score: scoreMap.get(r.id),
+        hasSubmitted: (subsData || []).some(sub => sub.registration_id === r.id)
       })));
     }
   };
@@ -211,17 +238,31 @@ export default function StudentDashboard() {
       return;
     }
     try {
-      const mapped: any = { ...updatedProfile };
-      // Map camelCase to snake_case for Supabase
-      if (mapped.resumeUrl !== undefined) { mapped.resume_url = mapped.resumeUrl; delete mapped.resumeUrl; }
-      if (mapped.workExperience !== undefined) { mapped.work_experience = mapped.workExperience; delete mapped.workExperience; }
-      if (mapped.profileCompleted !== undefined) { mapped.profile_completed = mapped.profileCompleted; delete mapped.profileCompleted; }
+      const mapped: any = {
+        name: updatedProfile.name,
+        college: updatedProfile.college,
+        department: updatedProfile.department || updatedProfile.branch,
+        year: updatedProfile.year,
+        phone: updatedProfile.phone,
+        bio: updatedProfile.bio,
+        skills: updatedProfile.skills,
+        github: updatedProfile.github,
+        linkedin: updatedProfile.linkedin,
+        website: updatedProfile.website,
+        resume_url: updatedProfile.resumeUrl,
+        projects: updatedProfile.projects,
+        work_experience: updatedProfile.workExperience,
+        avatar: updatedProfile.avatar,
+      };
       
       const { error } = await supabase.from('users').update(mapped).eq('uid', currentUser.uid);
       if (error) {
         setNotification({ message: `Profile update failed: ${error.message}`, type: 'error' });
         return;
       }
+      
+      await refreshUser();
+      
       setStudentProfile({ ...studentProfile, ...updatedProfile });
       setNotification({ message: 'Profile updated successfully!', type: 'success' });
     } catch (error) {
@@ -346,6 +387,46 @@ export default function StudentDashboard() {
     }
   };
 
+  const handleClearAllPasses = async () => {
+    if (!userId || registrations.length === 0) return;
+    if (currentUser?.isDemo) {
+      setRegistrations([]);
+      setNotification({ message: 'All passes cleared from view', type: 'success' });
+      return;
+    }
+    const { error } = await supabase
+      .from('registrations')
+      .update({ status: 'archived' })
+      .eq('student_id', userId);
+    
+    if (!error) {
+      setRegistrations([]);
+      setNotification({ message: 'All passes cleared from view', type: 'success' });
+    } else {
+      setNotification({ message: 'Failed to clear passes', type: 'error' });
+    }
+  };
+
+  const handleClearMyEvents = async () => {
+    if (!userId || registrations.length === 0) return;
+    if (currentUser?.isDemo) {
+      setRegistrations([]);
+      setNotification({ message: 'My Events cleared from view', type: 'success' });
+      return;
+    }
+    const { error } = await supabase
+      .from('registrations')
+      .update({ status: 'archived' })
+      .eq('student_id', userId);
+    
+    if (!error) {
+      setRegistrations([]);
+      setNotification({ message: 'My Events cleared from view', type: 'success' });
+    } else {
+      setNotification({ message: 'Failed to clear events', type: 'error' });
+    }
+  };
+
   const handleSubmitProject = async () => {
     if (!currentUser || !submittingEvent) return;
     setLoading(true);
@@ -386,7 +467,7 @@ export default function StudentDashboard() {
   const renderTabContent = () => {
     switch (activeTab) {
       case 'home': return <HomeTab student={studentProfile} registrations={registrations} events={events} notifications={notifications} onViewDetails={setSelectedEvent} />;
-      case 'passes': return <PassesTab registrations={registrations} onViewDetails={setSelectedEvent} events={events} />;
+      case 'passes': return <PassesTab registrations={registrations} onViewDetails={setSelectedEvent} events={events} onClearAll={handleClearAllPasses} />;
       case 'events': return renderMyEventsTab();
       case 'discover': return <DiscoverTab events={events} registrations={registrations} onRegister={handleRegister} onViewDetails={setSelectedEvent} onRefresh={fetchEvents} />;
       case 'certificates': return <CertificatesTab registrations={registrations} setNotification={setNotification} />;
@@ -398,7 +479,7 @@ export default function StudentDashboard() {
     }
   };
 
-  const renderMyEventsTab = () => <MyEventsTab registrations={registrations} onUploadClick={(reg) => setSubmittingEvent(reg)} />;
+  const renderMyEventsTab = () => <MyEventsTab registrations={registrations} onUploadClick={(reg) => setSubmittingEvent(reg)} onClearAll={handleClearMyEvents} />;
 
   return (
     <DashboardShell
@@ -861,7 +942,7 @@ function StatCard({ icon, value, label }: { icon: any, value: any, label: string
 }
 
 // --- EVENT PASSES TAB ---
-function PassesTab({ registrations, events, onViewDetails }: { registrations: any[], events?: any[], onViewDetails?: (e: any) => void }) {
+function PassesTab({ registrations, events, onViewDetails, onClearAll }: { registrations: any[], events?: any[], onViewDetails?: (e: any) => void, onClearAll?: () => void }) {
   const downloadQR = (regId: string, eventName: string) => {
     const canvas = document.getElementById(`qr-${regId}`) as HTMLCanvasElement;
     if (canvas) {
@@ -884,7 +965,17 @@ function PassesTab({ registrations, events, onViewDetails }: { registrations: an
   }
 
   return (
-    <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+    <div className="space-y-6">
+      <div className="flex justify-between items-center">
+        <h3 className="text-xl font-display font-bold">Your Event Passes</h3>
+        <button 
+          onClick={onClearAll}
+          className="text-xs font-bold text-gray-400 hover:text-red-primary flex items-center gap-1 hover:underline px-2 py-1"
+        >
+          <Trash2 size={14} /> Clear All
+        </button>
+      </div>
+      <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
       {registrations.map(reg => (
         <div key={reg.id} className="card overflow-hidden flex flex-col">
           <div className={`h-2 ${reg.attended ? 'bg-green-500' : 'bg-red-primary'}`} />
@@ -918,7 +1009,7 @@ function PassesTab({ registrations, events, onViewDetails }: { registrations: an
               <div className="absolute inset-0 bg-red-primary/5 opacity-0 group-hover:opacity-100 transition-opacity rounded-xl" />
               <QRCodeCanvas 
                 id={`qr-${reg.id}`} 
-                value={reg.unique_id || reg.id} 
+                value={`${window.location.origin}/attendance?id=${reg.unique_id || reg.id}`} 
                 size={140}
                 level="H"
                 includeMargin={true}
@@ -973,12 +1064,13 @@ function PassesTab({ registrations, events, onViewDetails }: { registrations: an
           </div>
         </div>
       ))}
+      </div>
     </div>
   );
 }
 
 // --- MY EVENTS TAB ---
-function MyEventsTab({ registrations, onUploadClick }: { registrations: any[], onUploadClick: (reg: any) => void }) {
+function MyEventsTab({ registrations, onUploadClick, onClearAll }: { registrations: any[], onUploadClick: (reg: any) => void, onClearAll?: () => void }) {
   const [activeSubTab, setActiveSubTab] = useState('upcoming');
   
   const filteredRegistrations = registrations.filter(reg => {
@@ -997,21 +1089,29 @@ function MyEventsTab({ registrations, onUploadClick }: { registrations: any[], o
 
   return (
     <div className="space-y-6">
-      <div className="flex gap-4 border-b border-gray-200">
-        {['Upcoming', 'Ongoing', 'Completed', 'Applied'].map(tab => (
-          <button
-            key={tab}
-            onClick={() => setActiveSubTab(tab.toLowerCase())}
-            className={`pb-3 px-2 text-sm font-bold transition-all relative ${
-              activeSubTab === tab.toLowerCase() ? 'text-red-primary' : 'text-gray-400'
-            }`}
-          >
-            {tab}
-            {activeSubTab === tab.toLowerCase() && (
-              <motion.div layoutId="subtab" className="absolute bottom-0 left-0 right-0 h-0.5 bg-red-primary" />
-            )}
-          </button>
-        ))}
+      <div className="flex justify-between items-center bg-white p-4 rounded-2xl shadow-sm border border-gray-100 mb-6">
+        <div className="flex gap-4">
+          {['Upcoming', 'Ongoing', 'Completed', 'Applied'].map(tab => (
+            <button
+              key={tab}
+              onClick={() => setActiveSubTab(tab.toLowerCase())}
+              className={`pb-3 px-2 text-sm font-bold transition-all relative ${
+                activeSubTab === tab.toLowerCase() ? 'text-red-primary' : 'text-gray-400'
+              }`}
+            >
+              {tab}
+              {activeSubTab === tab.toLowerCase() && (
+                <motion.div layoutId="subtab" className="absolute bottom-0 left-0 right-0 h-0.5 bg-red-primary" />
+              )}
+            </button>
+          ))}
+        </div>
+        <button 
+          onClick={onClearAll}
+          className="text-xs font-bold text-gray-400 hover:text-red-primary flex items-center gap-1 hover:underline"
+        >
+          <Trash2 size={14} /> Clear All
+        </button>
       </div>
 
       <div className="space-y-4">
@@ -1048,12 +1148,19 @@ function MyEventsTab({ registrations, onUploadClick }: { registrations: any[], o
                       <p className="font-bold text-xs">{reg.team_name}</p>
                     </div>
                   )}
-                  <button 
-                    onClick={() => onUploadClick(reg)}
-                    className="btn-primary py-2 px-4 text-xs font-bold shadow-sm"
-                  >
-                    Submit Idea
-                  </button>
+                  {!reg.hasSubmitted ? (
+                    <button 
+                      onClick={() => onUploadClick(reg)}
+                      className="btn-primary py-2 px-4 text-xs font-bold shadow-sm"
+                    >
+                      Submit Idea
+                    </button>
+                  ) : (
+                    <div className="flex items-center gap-2 text-green-600 bg-green-50 px-4 py-2 rounded-xl border border-green-100">
+                      <CheckCircle2 size={14} />
+                      <span className="text-xs font-bold">Idea Submitted</span>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -1063,23 +1170,36 @@ function MyEventsTab({ registrations, onUploadClick }: { registrations: any[], o
                   {[
                     { label: 'Registered', done: true },
                     { label: 'Attended', done: reg.attended },
-                    { label: 'Submission', done: false },
-                    { label: 'Evaluation', done: false },
+                    { label: 'Submission', done: reg.hasSubmitted },
+                    { label: 'Evaluation', done: !!reg.score },
                     { label: 'Certificate', done: reg.certificateIssued },
                   ].map((step, i) => (
-                    <div key={step.label} className="flex items-center gap-3">
-                      <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${
-                        step.done ? 'bg-green-500 text-white' : 'bg-gray-100 text-gray-400'
+                    <div key={i} className="flex items-center gap-3">
+                      <div className={`w-5 h-5 rounded-full flex items-center justify-center border ${
+                        step.done ? 'bg-green-500 border-green-500 text-white' : 'border-gray-200 text-gray-300'
                       }`}>
-                        {step.done ? '✓' : i + 1}
+                        {step.done ? <CheckCircle2 size={12} /> : <div className="w-1.5 h-1.5 rounded-full bg-current" />}
                       </div>
-                      <span className={`text-xs font-bold ${step.done ? 'text-gray-900' : 'text-gray-400'}`}>{step.label}</span>
+                      <span className={`text-[11px] font-bold ${step.done ? 'text-gray-900' : 'text-gray-400'}`}>{step.label}</span>
                     </div>
                   ))}
                 </div>
+
+                {reg.score && (
+                  <div className="mt-4 p-4 bg-green-50 rounded-2xl border border-green-100">
+                    <div className="flex justify-between items-center mb-1">
+                      <p className="text-[10px] font-bold text-green-700 uppercase tracking-widest">Team Score</p>
+                      <Award size={14} className="text-green-600" />
+                    </div>
+                    <p className="text-2xl font-mono font-bold text-green-700">{reg.score.score}<span className="text-xs ml-1 opacity-60">/ 100</span></p>
+                    {reg.score.feedback && (
+                      <p className="text-[10px] text-green-600 mt-2 italic leading-tight text-justify">"{reg.score.feedback}"</p>
+                    )}
+                  </div>
+                )}
+                </div>
               </div>
-            </div>
-          ))
+            ))
         )}
       </div>
     </div>
@@ -1525,6 +1645,7 @@ function JobsTab({ onViewDetails, jobs, onRefresh }: { onViewDetails: (job: any)
 
 // --- PROFILE TAB - BENTO BOX 4-COLUMN GRID ---
 function ProfileTab({ student, onSave }: { student: any, onSave: (updated: any) => void }) {
+  const { currentUser } = useAuth();
   const [localStudent, setLocalStudent] = useState(student);
   const [newSkill, setNewSkill] = useState('');
   const avatarInputRef = React.useRef<HTMLInputElement>(null);
@@ -1591,12 +1712,28 @@ function ProfileTab({ student, onSave }: { student: any, onSave: (updated: any) 
             type="file"
             accept="image/*"
             className="hidden"
-            onChange={(e) => {
+            onChange={async (e) => {
               const file = e.target.files?.[0];
-              if (!file) return;
-              const reader = new FileReader();
-              reader.onloadend = () => setLocalStudent({ ...localStudent, avatar: reader.result as string });
-              reader.readAsDataURL(file);
+              if (!file || !currentUser) return;
+              
+              try {
+                const fileExt = file.name.split('.').pop();
+                const fileName = `${currentUser.uid}/profile.${fileExt}`;
+
+                const { error: uploadError } = await supabase.storage
+                  .from('avatars')
+                  .upload(fileName, file, { upsert: true });
+
+                if (uploadError) throw uploadError;
+
+                const { data: urlData } = supabase.storage
+                  .from('avatars')
+                  .getPublicUrl(fileName);
+
+                setLocalStudent({ ...localStudent, avatar: urlData.publicUrl });
+              } catch (err) {
+                console.error('Avatar upload error:', err);
+              }
             }}
           />
           <img src={localStudent.avatar || "https://picsum.photos/seed/user/200/200"} className="w-full h-full rounded-full border-4 border-red-primary p-1" alt="" />
@@ -1663,10 +1800,10 @@ function ProfileTab({ student, onSave }: { student: any, onSave: (updated: any) 
             />
           </div>
           <div>
-            <label className="text-[9px] font-bold text-gray-400 uppercase block mb-1">Branch</label>
+            <label className="text-[9px] font-bold text-gray-400 uppercase block mb-1">Department</label>
             <input 
               type="text" 
-              value={localStudent.department || localStudent.branch || ''} 
+              value={localStudent.department || ''} 
               onChange={e => setLocalStudent({...localStudent, department: e.target.value})}
               className="w-full bg-gray-50 border border-gray-200 rounded-lg p-2.5 text-xs outline-none focus:border-red-primary" 
             />
@@ -1677,6 +1814,15 @@ function ProfileTab({ student, onSave }: { student: any, onSave: (updated: any) 
               type="text" 
               value={localStudent.year || ''} 
               onChange={e => setLocalStudent({...localStudent, year: e.target.value})}
+              className="w-full bg-gray-50 border border-gray-200 rounded-lg p-2.5 text-xs outline-none focus:border-red-primary" 
+            />
+          </div>
+          <div>
+            <label className="text-[9px] font-bold text-gray-400 uppercase block mb-1">Phone</label>
+            <input 
+              type="tel" 
+              value={localStudent.phone || ''} 
+              onChange={e => setLocalStudent({...localStudent, phone: e.target.value})}
               className="w-full bg-gray-50 border border-gray-200 rounded-lg p-2.5 text-xs outline-none focus:border-red-primary" 
             />
           </div>
@@ -1796,12 +1942,27 @@ function ProfileTab({ student, onSave }: { student: any, onSave: (updated: any) 
           id="resume-upload" 
           className="hidden" 
           accept=".pdf,.doc,.docx"
-          onChange={(e) => {
+          onChange={async (e) => {
             const file = e.target.files?.[0];
-            if (file) {
-              const reader = new FileReader();
-              reader.onloadend = () => setLocalStudent({ ...localStudent, resumeUrl: reader.result as string });
-              reader.readAsDataURL(file);
+            if (!file || !currentUser) return;
+            
+            try {
+              const fileExt = file.name.split('.').pop();
+              const fileName = `${currentUser.uid}/${Date.now()}.${fileExt}`;
+
+              const { error: uploadError } = await supabase.storage
+                .from('resumes')
+                .upload(fileName, file, { upsert: true });
+
+              if (uploadError) throw uploadError;
+
+              const { data: urlData } = supabase.storage
+                .from('resumes')
+                .getPublicUrl(fileName);
+
+              setLocalStudent({ ...localStudent, resumeUrl: urlData.publicUrl });
+            } catch (err) {
+              console.error('Resume upload error:', err);
             }
           }}
         />
@@ -2198,29 +2359,36 @@ function NotificationsTab({ notifications, userId }: { notifications: any[], use
 
   const handleMarkAllRead = async () => {
     if (!userId) return;
+    // Only mark user-specific notifications as read
     const { error } = await supabase
       .from('notifications')
       .update({ read: true })
       .eq('user_id', userId)
       .eq('read', false);
+    
     if (error) {
       setNotice({ message: `Mark read failed: ${error.message}`, type: 'error' });
       return;
     }
-    setNotice({ message: 'All notifications marked as read.', type: 'success' });
+
+    // Refresh instantly for the UI
+    setNotice({ message: 'Notifications marked as read.', type: 'success' });
   };
 
   const handleClearAll = async () => {
     if (!userId) return;
+    // Only delete user-specific notifications
     const { error } = await supabase
       .from('notifications')
       .delete()
       .eq('user_id', userId);
+    
     if (error) {
       setNotice({ message: `Clear all failed: ${error.message}`, type: 'error' });
       return;
     }
-    setNotice({ message: 'All notifications cleared.', type: 'success' });
+
+    setNotice({ message: 'Notifications cleared.', type: 'success' });
   };
 
   useEffect(() => {
